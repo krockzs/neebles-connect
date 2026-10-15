@@ -1,0 +1,8 @@
+NEEBLES Connect 1.0.0 — Contract preparation (NOT A PUBLISHED RELEASE)
+
+This is a draft for the first release. It does not certify installation,
+services, runtime IPC, tray, SSH, VNC, or UI support.
+
+Official packaging requires a controlled build, Esbirro/CUSTOM V2, Construction,
+immutable source SHA selection, and real NEEBLES OS acceptance. Save your work
+before any reboot required by later changes.

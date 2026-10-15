@@ -1,0 +1,13 @@
+{
+  "hardcoded": {
+    "module": "neebles-connect"
+  },
+  "ui": {
+    "language": "en_US"
+  },
+  "tray": {
+    "visible": "false",
+    "autostart": "false",
+    "session_boot_id": ""
+  }
+}

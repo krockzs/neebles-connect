@@ -1,0 +1,8 @@
+# Laboratorio temporal; resguardado fuera del árbol de código.
+/integration/esbirro/
+# Resultados habituales, no autoridades de build certificadas.
+/build/
+/target/
+/cmake-build-*/
+**/__pycache__/
+**/*.pyc

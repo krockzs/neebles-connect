@@ -1,0 +1,10 @@
+{
+  "schema": 4,
+  "name": "neebles-connect",
+  "version": "1.0.0",
+  "entrypoint": "runtime/neebles-connect",
+  "lifecycle": "lifecycle.json",
+  "surfaces": "surfaces.json",
+  "contracts": [],
+  "settings": "settings/default.json"
+}
