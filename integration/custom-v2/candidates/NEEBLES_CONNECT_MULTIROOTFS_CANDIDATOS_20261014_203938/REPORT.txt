@@ -1,0 +1,84 @@
+NEEBLES CONNECT / MULTI-ROOTFS / MATERIALES CANDIDATOS
+SOLO SE ESCRIBE EN DOWNLOADS. NUNCA SE MODIFICA CUSTOM V2.
+NO APTO PARA PUBLICAR SIN CERTIFICACIÓN DEL BOSS Y ESBIRRO.
+Fecha: 2026-10-14T20:39:38
+Repo: /home/thomyorke/NEEBLES/neebles-custom
+Git HEAD: 6d16fcfb73c873b542e7e3012851172ae00001c4
+Git status: ## main...origin/main
+
+=== REUTILIZACIÓN DEL ARSENAL ===
+Essential: 59
+Connect original: 143
+Test Module original: 32
+Paquetes TEST referenciados desde los tres mundos: 18
++ fontconfig-config
++ fonts-dejavu-core
++ fonts-dejavu-mono
++ libbrotli1
++ libexpat1
++ libffi8
++ libfontconfig1
++ libfreetype6
++ libreadline8t64
++ libx11-6
++ libx11-data
++ libxau6
++ libxcb1
++ libxdmcp6
++ libxext6
++ libxrender1
++ readline-common
++ x11-common
+SHA256 físicos nuevamente comprobados: 234 archivos
+
+=== connect-vnc ===
+Paquetes Totales: 184
+Essential: 59
+Delta: 125
+Dependencias no resueltas: 0
+Expresiones sin interpretar: 0
+Conflictos/Breaks: 0
+
+=== connect-keys-full ===
+Paquetes Totales: 174
+Essential: 59
+Delta: 115
+Dependencias no resueltas: 0
+Expresiones sin interpretar: 0
+Conflictos/Breaks: 0
+
+=== connect-keys-minimal ===
+Paquetes Totales: 174
+Essential: 59
+Delta: 115
+Dependencias no resueltas: 0
+Expresiones sin interpretar: 0
+Conflictos/Breaks: 0
+
+=== GATE DE REFERENCIA CERTIFICADA TEST MODULE ===
+Archivos esperados: 2210
+Archivos reconstruidos: 2210
+Diferencias: 0
+Gate extracción de Test Module: IGUALDAD EXACTA
+
+=== connect-vnc FS ===
+DEB DELTA: 125
+ENTRADAS EXTRAÍDAS DELTA: 2915
+COLISIONES ESSENTIAL/DELTA (excluye directorios): 0
+
+=== connect-keys-full FS ===
+DEB DELTA: 115
+ENTRADAS EXTRAÍDAS DELTA: 3405
+COLISIONES ESSENTIAL/DELTA (excluye directorios): 0
+
+=== connect-keys-minimal FS ===
+DEB DELTA: 115
+ENTRADAS EXTRAÍDAS DELTA: 3404
+COLISIONES ESSENTIAL/DELTA (excluye directorios): 0
+
+=== ESTADO ===
+Candidatos creados SOLO en Downloads. No se modifica Git.
+Sin bloqueos detectados por ESTA herramienta.
+FALTAN: Boss materialization en RuntimeLease real, ELF/ABI, grants,
+certificación Esbirro y módulo Connect con código compilado.
+Estos ficheros son CANDIDATOS, no autoridad productiva.
