@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "module": "neebles-connect",
+  "version": "1.0.0",
+  "milestone": "M6.1 user-tested SSH+VNC+Tab+Fit (not yet Boss-certified)",
+  "files": {
+    "assets/neebles-connect-icon.png": "42c56d6556e16e0c0b67b717478d461e0b825d7b36c36340831d6a4da8c329c4",
+    "assets/neebles-connect-logo.png": "b4859920a8bd6ea6fa8e73ce213fc38b8c68a4466d76881d7d467218a91600a5",
+    "assets/neebles-connect-tray-icon.png": "adcb3ec05ce4bc05e7087347daf4bac17a83c4880513207201e6b717fa465596",
+    "manifest.json": "ee21460b7e287971ff832be641d807477c22a99bf9f9402f01ddd1df245b6571",
+    "ui/desktop/CMakeLists.txt": "06a5a46eb70426c88908334bada9228dc1c47d671dfc81292a167866966ca3e7",
+    "ui/desktop/MainWindow.cpp": "c4134e5f536c6de50f9240fbe9f23222a80c9874d2cacc5ea6cb81a6a2c6b111",
+    "ui/desktop/MainWindow.h": "5f438bce8300b44bcbec2801fab05e36cf4b3edd23a7737f3568ba76ffd1d3b5",
+    "ui/desktop/SshPane.cpp": "08f054cc7f11f96bbe6c47138f6737370781fea2fa2d5080d7b477516d311ef3",
+    "ui/desktop/SshPane.h": "caeb430d576788c697254dfeb6c51d8a58ba5c49710dfe152d2ff456f63221b1",
+    "ui/desktop/SshTerminal.cpp": "7a5039e3299e89d6d02d963e22f9efbb6b51fb794dcdc146c919d0d4db38c42b",
+    "ui/desktop/SshTerminal.h": "9ec3a8141444750b25e580d22d9fbd5d9779c2a2f0b4fdee27a24b9e51dcadd7",
+    "ui/desktop/VncPane.cpp": "38f3ccef0407ede6b0b10f111ec718e6b0efb61d60ac81e8ec0a7307f88482a6",
+    "ui/desktop/VncPane.h": "02c2481fe310c587f1daf8c95d4038d1ecc7c62a155bdb3e4f17d13ffb5eef37",
+    "ui/desktop/main.cpp": "5168e2a34fd329fc78b4bcc3664c85d14c09c06c14a5b27f236b2e47caca1607"
+  }
+}

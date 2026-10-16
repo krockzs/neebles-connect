@@ -1,0 +1,32 @@
+{
+  "assets": {
+    "assets/neebles-connect-icon.png": "42c56d6556e16e0c0b67b717478d461e0b825d7b36c36340831d6a4da8c329c4",
+    "assets/neebles-connect-logo.png": "b4859920a8bd6ea6fa8e73ce213fc38b8c68a4466d76881d7d467218a91600a5",
+    "assets/neebles-connect-tray-icon.png": "adcb3ec05ce4bc05e7087347daf4bac17a83c4880513207201e6b717fa465596",
+    "manifest.json": "ee21460b7e287971ff832be641d807477c22a99bf9f9402f01ddd1df245b6571"
+  },
+  "binary": {
+    "build": "F3 Qt 6.8.2 Esbirro GCC14",
+    "elf_type": "ELF64 x86_64",
+    "path": "bin/neebles-connect-desktop",
+    "rpath_runpath": "none",
+    "sha256": "edd2a86a85b9576c285e6ca310d3d72f30699b015714e31a3a624e81efce5a1f"
+  },
+  "elf_build_evidence": {
+    "f4_report_sha256": "0318b8f7dbb580de7967aacf2fa8de298486babb4cc0fd9dcb2929abe902cc98",
+    "missing": 0,
+    "nodes": 83,
+    "references": 250
+  },
+  "module": "neebles-connect",
+  "notes": "No executable from Downloads is used in released module. Boss runtime authority still pending.",
+  "pending": [
+    "Rust runtime/neebles-connect with authenticated Module IPC",
+    "CUSTOM V2 runtime world & Construction",
+    "real RuntimeLease XCB",
+    "Boss registry source SHA pinned and real install/uninstall"
+  ],
+  "schema": 1,
+  "state": "BUILD_CANDIDATE_PROMOTED_NOT_BOSS_CERTIFIED",
+  "version": "1.0.0"
+}

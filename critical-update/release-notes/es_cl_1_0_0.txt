@@ -1,8 +1,9 @@
-NEEBLES Connect 1.0.0 — Preparación de contratos (NO ES UNA RELEASE PUBLICADA)
+NEEBLES Connect 1.0.0 — primera versión candidata
 
-Este archivo es un borrador para la futura publicación inicial. No certifica instalación,
-servicios, runtime IPC, Tray, SSH, VNC ni soporte de UI.
+Interfaz Qt 6.8.2 de SSH y VNC con runtime Rust 1.98.1.
+Contrato de instalación, apertura y desinstalación gobernado por Boss.
+Sin Tray, arranque automático ni funciones de KeePass en 1.0.0.
 
-El primer empaquetado oficial requerirá build, Esbirro/CUSTOM V2, Construction,
-registro con SHA fijo y pruebas reales en NEEBLES OS. Guardar tu trabajo antes de
-cualquier reinicio requerido por cambios posteriores.
+La compilación y las auditorías de material ya pasaron. La aceptación instalada
+por Boss y las pruebas de cierre/rollback deben verificarse por separado.
+Guardar el trabajo antes de cualquier reinicio que solicite Boss.

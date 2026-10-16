@@ -1,12 +1,14 @@
-# Runtime Connect — implementación pendiente
+# Runtime NEEBLES Connect 1.0.0
 
-El entrypoint productivo se llamará `runtime/neebles-connect` una vez construido,
-certificado y colocado en el módulo con la ruta exacta acordada.
+Rust 1.98.1. El binario `runtime/neebles-connect --intent open` se ejecuta como
+proceso gobernado por Boss Construction (`modules.runtime`, RootFS `rust-qt`).
 
-Se implementará en Rust 1.98.1 y deberá establecer **Module IPC autenticado** por
-`/run/neebles/modules.sock` con frames JSON de longitud prefijada de 4 bytes big-endian;
-registro con identidad de módulo y sesión, eventos, errores, cierre y unregister.
-No se crea ningún binario de relleno, script host fallback ni sesión simulada.
+Usa `/run/neebles/modules.sock` mediante el grant `boss.modules.ipc`, frames JSON
+con prefijo big-endian de 4 bytes, `register` de módulo/sesión/protocolo 1,
+`subscribe`, `ping/pong`, `shutdown/shutdown_ack` y `unregister` al cerrar
+la ventana Qt. Boss autentica al proceso según la identidad del kernel.
 
-La interfaz Qt 6.8.2 es un consumidor privado de la autoridad del runtime;
-no debe abrir sockets administrativos de Boss directamente.
+El Rust supervisa `bin/neebles-connect-desktop` como proceso hijo; cerrar la
+ventana o perder el canal IPC debe liberar la sesión. Esto solo está probado a
+nivel de build y tests unitarios F7; RuntimeLease y Boss Live siguen pendientes.
+La Qt no recibe permisos administrativos de Boss; no se declara Tray.
