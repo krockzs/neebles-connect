@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MODULE = 'neebles-connect'
-QT_SHA = 'edd2a86a85b9576c285e6ca310d3d72f30699b015714e31a3a624e81efce5a1f'
+QT_SHA = 'b13780debc9b4925e1cbe86816c8faf0e0386aa34ae44407c50a21a751ddc164'
 CACHE = Path.home()/'.cache/neebles/connect-f7-builds'
 BASE_LIFECYCLE = '701525ae14ff56cf8ff4445759ed4102c7f24736'
 BASE_MANIFEST = '80980b2b6759b639f1eba198eee8730cd7ff4d60'
@@ -32,10 +32,20 @@ def safe(rel):
 def canonical(j):return (json.dumps(j,ensure_ascii=False,indent=2)+'\n').encode()
 def base_contracts():
     m=json.loads(safe('manifest.json').read_text()); l=json.loads(safe('lifecycle.json').read_text())
-    if (m.get('schema'),m.get('name'),m.get('version'),m.get('entrypoint'),m.get('contracts'))!=(4,MODULE,'1.0.0','runtime/neebles-connect',[]):
-        raise RuntimeError('manifest identity/contracts not from F6')
+    commands=[{'type':'commands','file':'contracts/commands.json','schema':1,'enabled':True}]
+    if (m.get('schema'),m.get('name'),m.get('version'),m.get('entrypoint'),m.get('contracts'))!=(4,MODULE,'1.0.0','runtime/neebles-connect',commands):
+        raise RuntimeError('manifest identity/contracts not current')
     if 'tray' in m or m.get('surfaces')!='surfaces.json': raise RuntimeError('unexpected tray or surfaces contract')
-    if json.loads(safe('surfaces.json').read_text()).get('items')!={}:raise RuntimeError('surfaces must remain empty in V1')
+    surfaces=json.loads(safe('surfaces.json').read_text())
+    if surfaces.get('schema')!=2 or not isinstance(surfaces.get('items'),dict):
+        raise RuntimeError('invalid Surfaces schema 2 contract')
+    for item_id,item in surfaces['items'].items():
+        if not isinstance(item_id,str) or not isinstance(item,dict):
+            raise RuntimeError('invalid Surfaces item')
+        if item.get('surface') not in ('ui','launcher','tray'):
+            raise RuntimeError('unknown Surfaces target')
+        if not isinstance(item.get('data'),dict):
+            raise RuntimeError('invalid Surfaces data')
     if safe('manifest.json').is_symlink() or safe('lifecycle.json').is_symlink():raise RuntimeError('symlink contracts')
     if 'governor.open' not in l.get('hardcoded',{}):
         if blobsha(safe('manifest.json'))!=BASE_MANIFEST or blobsha(safe('lifecycle.json'))!=BASE_LIFECYCLE:
@@ -54,7 +64,7 @@ def desired(m,l):
 
 def inspect():
     if not (ROOT/'.git').is_dir() or ROOT.is_symlink():raise RuntimeError('missing real Connect checkout')
-    if sha(safe('bin/neebles-connect-desktop'))!=QT_SHA:raise RuntimeError('F6 Qt SHA mismatch')
+    if sha(safe('bin/neebles-connect-desktop'))!=QT_SHA:raise RuntimeError('F17 Esbirro Qt SHA mismatch')
     if not all(safe('assets/'+a).is_file() for a in ('neebles-connect-icon.png','neebles-connect-logo.png','neebles-connect-tray-icon.png')):raise RuntimeError('missing official assets')
     if not all(safe(x).is_file() for x in SRC):raise RuntimeError('F7 source not installed')
     m,l,state=base_contracts()
@@ -106,7 +116,7 @@ def main():
     for option in ('preview','build','promote','verify'):g.add_argument('--'+option,action='store_true')
     args=a.parse_args();state=inspect()
     if args.preview:
-        print('F7 PREVIEW: Connect sources and F6 Qt SHA OK; contracts '+state)
+        print('F7 PREVIEW: Connect sources and F17 Qt SHA OK; contracts '+state)
         print('NEEDED: offline pinned Rust 1.98.1; no host Qt, no Tray; candidate in '+str(CACHE))
         return
     if args.build:
@@ -136,8 +146,23 @@ def main():
     dest=safe('runtime/neebles-connect')
     if args.promote:
         if state=='promoted':
-            if sha(dest)!=d['sha256']:raise RuntimeError('promoted binary differs; refuse overwrite')
-            print('F7 PROMOTE: already applied; no changes');return
+            if sha(dest)==d['sha256']:
+                print('F7 PROMOTE: binary already current');return
+            check_elf(dest)
+            check=subprocess.run(['git','-C',str(ROOT),'status','--porcelain','--','runtime/neebles-connect'],
+                capture_output=True,text=True,check=True,timeout=20)
+            if check.stdout.strip():raise RuntimeError('runtime ELF has local changes; refusing overwrite')
+            previous=sha(dest)
+            backup=CACHE/'replacement-backups'/('neebles-connect-'+previous)
+            if backup.exists():
+                if sha(backup)!=previous:raise RuntimeError('old ELF backup mismatch')
+            else:
+                write_atomic(backup,dest.read_bytes(),0o755)
+            write_atomic(dest,cand.read_bytes(),0o755)
+            if sha(dest)!=d['sha256']:raise RuntimeError('new ELF hash mismatch; backup at '+str(backup))
+            if inspect()!='promoted':raise RuntimeError('promoted runtime failed contract verification')
+            print('F7 PROMOTE: controlled rebuild integrated; previous ELF:',backup)
+            return
         if dest.exists():raise RuntimeError('unexpected existing Rust entrypoint, refuse overwrite')
         backup=CACHE/'promotion-backup'
         if backup.exists():raise RuntimeError('previous F7 backup exists, inspect before promote')
