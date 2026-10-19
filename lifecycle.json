@@ -7,7 +7,9 @@
     "governor.disable": "disable",
     "governor.open": "open"
   },
-  "require": {},
+  "require": {
+    "neebles-secrets": {}
+  },
   "objects": {},
   "transitions": {
     "install": {

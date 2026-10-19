@@ -1,4 +1,31 @@
 {
   "schema": 2,
-  "items": {}
+  "items": {
+    "open.launcher": {
+      "surface": "launcher",
+      "visible": true,
+      "data": {
+        "control": "button",
+        "action": "open",
+        "label_key": "tray.open"
+      },
+      "require": {
+        "self": "active",
+        "modules": {}
+      }
+    },
+    "open.tray": {
+      "surface": "tray",
+      "visible": true,
+      "data": {
+        "control": "button",
+        "action": "open",
+        "label_key": "tray.open"
+      },
+      "require": {
+        "self": "active",
+        "modules": {}
+      }
+    }
+  }
 }
