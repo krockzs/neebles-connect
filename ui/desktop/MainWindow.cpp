@@ -14,6 +14,11 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QIcon>
+#include <QLocalSocket>
+#include <QLocale>
+#include <QProcess>
+#include <QStandardPaths>
+#include <QtEndian>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -65,6 +70,61 @@ QSpinBox* portBox(QWidget* parent, int port) {
 bool validHost(const QString& host) {
     return !host.trimmed().isEmpty() && !host.contains(' ') &&
            !host.contains('/') && !host.contains(':'); // IPv4 / hostname en este hito.
+}
+
+
+// Secrets IPC is always local to the user session. This is not the Boss module IPC.
+QJsonObject secretsRpc(const QJsonObject& message) {
+    const QString runtime=qEnvironmentVariable("XDG_RUNTIME_DIR");
+    if(runtime.isEmpty())return {};
+    QLocalSocket socket;
+    socket.connectToServer(QDir(runtime).filePath(QStringLiteral("neebles-secrets/secrets.sock")));
+    if(!socket.waitForConnected(250))return {};
+    const QByteArray body=QJsonDocument(message).toJson(QJsonDocument::Compact);
+    if(body.isEmpty()||body.size()>16384)return {};
+    const quint32 n=quint32(body.size());
+    char prefix[4]={char((n>>24)&255),char((n>>16)&255),char((n>>8)&255),char(n&255)};
+    if(socket.write(prefix,4)!=4||socket.write(body)!=body.size())return {};
+    if(!socket.waitForBytesWritten(350))return {};
+    auto readExact=[&socket](int len)->QByteArray {
+        QByteArray out;
+        while(out.size()<len){
+            const QByteArray part=socket.read(len-out.size());
+            if(part.isEmpty()){
+                if(!socket.waitForReadyRead(400))return {};
+            }else out.append(part);
+        }
+        return out;
+    };
+    const QByteArray header=readExact(4);
+    if(header.size()!=4)return {};
+    const quint32 size=(quint8(header[0])<<24)|(quint8(header[1])<<16)|
+                       (quint8(header[2])<<8)|quint8(header[3]);
+    if(size==0||size>16384)return {};
+    const QByteArray response=readExact(int(size));
+    if(response.size()!=int(size))return {};
+    const auto data=QJsonDocument::fromJson(response);
+    return data.isObject()?data.object():QJsonObject{};
+}
+
+QString secretsLabel(const QString& root,const QString& key) {
+    QString language=qEnvironmentVariable("NEEBLES_LANGUAGE");
+    if(language.isEmpty()) {
+        QFile settings(QStringLiteral("/opt/neebles/shared/settings/local_settings_neebles-connect.json"));
+        if(settings.open(QIODevice::ReadOnly))
+            language=QJsonDocument::fromJson(settings.readAll()).object()
+                         .value(QStringLiteral("ui")).toObject().value(QStringLiteral("language")).toString();
+    }
+    if(language.isEmpty())language=QLocale::system().name();
+    const QString code=language.startsWith(QStringLiteral("es"),Qt::CaseInsensitive)
+                       ?QStringLiteral("es_CL"):QStringLiteral("en_US");
+    QFile file(QDir(root).filePath(QStringLiteral("languages/%1.json").arg(code)));
+    if(file.open(QIODevice::ReadOnly)){
+        const QString result=QJsonDocument::fromJson(file.readAll()).object().value(key).toString();
+        if(!result.isEmpty())return result;
+    }
+    return code==QStringLiteral("es_CL")?QStringLiteral("Requiere desbloqueo"):
+                                               QStringLiteral("Requires unlock");
 }
 
 QString profilesFile() {
@@ -193,6 +253,11 @@ MainWindow::MainWindow(QString moduleRoot, QString version, QWidget* parent)
         statusBar()->showMessage(QStringLiteral("No se pudieron leer los perfiles locales de desarrollo"));
     refreshSaved();
     showAdmin(kDashboard);
+    QTimer::singleShot(0,this,[this](){refreshSecretsAccess();});
+    auto* monitor=new QTimer(this);
+    monitor->setInterval(2500);
+    connect(monitor,&QTimer::timeout,this,[this](){refreshSecretsAccess();});
+    monitor->start();
 }
 
 void MainWindow::toggleSidebar() {
@@ -305,6 +370,13 @@ void MainWindow::buildSaved() {
     auto* page = new QWidget(adminStack_);
     auto* outer = new QVBoxLayout(page);
     outer->addWidget(header(QStringLiteral("Mis conexiones"), page));
+    secretsState_=new QLabel(QStringLiteral("Secrets: checking"),page);
+    secretsState_->setWordWrap(true);
+    outer->addWidget(secretsState_);
+    missingVault_=new QPushButton(secretsLabel(moduleRoot_,QStringLiteral("vault.requires_unlock")),page);
+    missingVault_->setVisible(false);
+    outer->addWidget(missingVault_,0,Qt::AlignLeft);
+    connect(missingVault_,&QPushButton::clicked,this,[this](){requestVault();});
     auto* scroller = new QScrollArea(page);
     scroller->setWidgetResizable(true);
     auto* contents = new QWidget(scroller);
@@ -314,11 +386,66 @@ void MainWindow::buildSaved() {
     adminStack_->addWidget(page);
 }
 
+
+void MainWindow::refreshSecretsAccess() {
+    const auto state=secretsRpc(QJsonObject{
+        {QStringLiteral("op"),QStringLiteral("vault.exists")},
+        {QStringLiteral("module"),QStringLiteral("neebles-connect")}
+    });
+    const bool online=state.value(QStringLiteral("ok")).toBool();
+    const QJsonObject payload=state.value(QStringLiteral("data")).toObject();
+    const int nextExists=online?(payload.value(QStringLiteral("exists")).toBool()?1:0):-1;
+    const bool nextReady=nextExists==1&&!payload.value(QStringLiteral("locked")).toBool(true);
+    const bool changed=nextExists!=vaultExists_||nextReady!=vaultReady_;
+    vaultExists_=nextExists;
+    vaultReady_=nextReady;
+    if(missingVault_){
+        missingVault_->setVisible(vaultExists_==0); // Only when confirmed missing.
+        missingVault_->setText(secretsLabel(moduleRoot_,QStringLiteral("vault.requires_unlock")));
+    }
+    if(secretsState_){
+        secretsState_->setText(vaultExists_<0?QStringLiteral("Secrets service unavailable"):
+            vaultExists_==0?QStringLiteral("Vault not installed. Unlock Secrets to create it."):
+            vaultReady_?QStringLiteral("Secrets unlocked · My Connections available"):
+                        QStringLiteral("Secrets locked · My Connections disabled"));
+    }
+    if(changed&&savedList_)refreshSaved();
+}
+
+void MainWindow::requestVault() {
+    // The consumer asks, Secrets creates after successful unlock. Never send a password.
+    const auto requested=secretsRpc(QJsonObject{
+        {QStringLiteral("op"),QStringLiteral("vault.request")},
+        {QStringLiteral("module"),QStringLiteral("neebles-connect")}
+    });
+    if(!requested.value(QStringLiteral("ok")).toBool()){
+        QMessageBox::warning(this,QStringLiteral("NEEBLES Secrets"),
+            QStringLiteral("The Secrets service is unavailable. Please start it first."));
+        refreshSecretsAccess();
+        return;
+    }
+    refreshSecretsAccess();
+    if(vaultExists_==1)return; // Already unlocked and provisioned.
+    // Ask the installed Boss CLI to Open Secrets; no direct Qt or backend bypass.
+    const QString boss=QStandardPaths::findExecutable(QStringLiteral("neebles"));
+    if(boss.isEmpty()||!QProcess::startDetached(boss,
+       {QStringLiteral("modules"),QStringLiteral("action"),
+        QStringLiteral("neebles-secrets"),QStringLiteral("open")})){
+        QMessageBox::information(this,QStringLiteral("NEEBLES Secrets"),
+            QStringLiteral("Vault request pending. Open NEEBLES Secrets from Boss Launcher or Tray to unlock."));
+    }
+}
+
 void MainWindow::refreshSaved() {
     if (!savedList_) return;
     while (QLayoutItem* item = savedList_->takeAt(0)) {
         if (QWidget* widget = item->widget()) widget->deleteLater();
         delete item;
+    }
+    if (!vaultReady_) {
+        savedList_->addWidget(new QLabel(QStringLiteral("Secrets locked / unavailable: My Connections disabled.")));
+        savedList_->addStretch();
+        return;
     }
     if (profiles_.isEmpty()) {
         savedList_->addWidget(new QLabel(QStringLiteral("Todavía no hay equipos guardados.")));

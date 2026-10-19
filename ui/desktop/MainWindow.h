@@ -12,6 +12,7 @@ class QSpinBox;
 class QComboBox;
 class QVBoxLayout;
 class QWidget;
+class QLabel;
 class VncPane;
 
 struct ConnectProfile {
@@ -35,6 +36,8 @@ private:
     void buildEditor();
     void buildSaved();
     void refreshSaved();
+    void refreshSecretsAccess();
+    void requestVault();
     void saveProfile();
     void editProfile(const ConnectProfile&);
     void deleteProfile(const ConnectProfile&);
@@ -69,4 +72,8 @@ private:
     QSpinBox* editVncPort_ = nullptr;
     QPushButton* saveButton_ = nullptr;
     QVBoxLayout* savedList_ = nullptr;
+    QLabel* secretsState_ = nullptr;
+    QPushButton* missingVault_ = nullptr;
+    int vaultExists_ = -1; // -1 unknown, 0 missing, 1 exists
+    bool vaultReady_ = false;
 };

@@ -22,5 +22,6 @@
   "tray.open": "Abrir NEEBLES Connect",
   "tray.visible": "Mostrar icono en la bandeja",
   "tray.autostart": "Iniciar bandeja con Linux",
-  "errors.not_implemented": "Esta función todavía no está implementada"
+  "errors.not_implemented": "Esta función todavía no está implementada",
+  "vault.requires_unlock": "Requiere desbloqueo"
 }

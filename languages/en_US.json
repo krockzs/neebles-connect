@@ -22,5 +22,6 @@
   "tray.open": "Open NEEBLES Connect",
   "tray.visible": "Show system tray icon",
   "tray.autostart": "Start tray with Linux",
-  "errors.not_implemented": "This feature is not implemented yet"
+  "errors.not_implemented": "This feature is not implemented yet",
+  "vault.requires_unlock": "Requires unlock"
 }

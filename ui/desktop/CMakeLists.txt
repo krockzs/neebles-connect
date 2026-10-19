@@ -32,7 +32,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_SKIP_BUILD_RPATH ON)
 set(CMAKE_SKIP_INSTALL_RPATH ON)
-find_package(Qt6 6.8.2 EXACT REQUIRED COMPONENTS Widgets)
+find_package(Qt6 6.8.2 EXACT REQUIRED COMPONENTS Widgets Network)
 find_package(Threads REQUIRED)
 
 add_library(EsbirroVNCClient SHARED IMPORTED GLOBAL)
@@ -54,7 +54,7 @@ add_executable(neebles-connect-desktop
     SshPane.cpp SshPane.h
     SshTerminal.cpp SshTerminal.h)
 target_link_libraries(neebles-connect-desktop PRIVATE
-    Qt6::Widgets Threads::Threads EsbirroVNCClient EsbirroSSH2 EsbirroVTerm)
+    Qt6::Widgets Qt6::Network Threads::Threads EsbirroVNCClient EsbirroSSH2 EsbirroVTerm)
 target_compile_options(neebles-connect-desktop PRIVATE -Wall -Wextra -Wpedantic)
 target_link_options(neebles-connect-desktop PRIVATE
     -Wl,--no-allow-shlib-undefined
