@@ -147,26 +147,14 @@ fn secrets_request(request: &Value) -> Result<Value,String> {
     response.get("data").cloned().ok_or_else(|| "NEEBLES Secrets no devolvió data".to_string())
 }
 fn prepare_vault_install() -> Result<(),String> {
-    // During Lifecycle.install Boss has already published this module's
-    // candidate, but rolls back its installation on a failed operation.
+    // The user prepares and unlocks Secrets before installing Connect.
+    // Boss will own generic dependency preflight in a later release.
+    // Only Secrets may authorize or create the module-owned KDBX.
     module_root()?;
-    // The governed session socket exists only when Secrets service is
-    // actually present. Its absence causes Construction to reject install.
-    let status=secrets_request(&json!({"op":"vault.status"}))?;
-    if status.get("installed").and_then(Value::as_bool)!=Some(true) {
-        return Err("NEEBLES Connect requiere NEEBLES Secrets instalado mediante Boss".into());
-    }
-    if status.get("initialized").and_then(Value::as_bool)!=Some(true) {
-        return Err("Abre NEEBLES Secrets y configura primero la clave maestra".into());
-    }
-    if status.get("locked").and_then(Value::as_bool)!=Some(false) {
-        return Err("Desbloquea NEEBLES Secrets antes de instalar Connect".into());
-    }
-    // Only Secrets owns vault creation, storage, validation and non-overwrite.
     let created=secrets_request(&json!({"op":"vault.ensure","module":MODULE}))?;
     if created.get("module").and_then(Value::as_str)!=Some(MODULE)
        || created.get("exists").and_then(Value::as_bool)!=Some(true) {
-        return Err("Secrets no confirmó la bóveda propia de Connect".into());
+        return Err("Secrets did not confirm the Connect vault".into());
     }
     Ok(())
 }
