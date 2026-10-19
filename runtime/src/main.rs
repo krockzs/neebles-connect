@@ -123,9 +123,60 @@ fn stop_ui(child: &mut Child) {
     let _=child.kill();
     let _=child.wait();
 }
+// F26: module-owned installation gate, invoked only through authenticated
+// CUSTOM V2 Construction (modules.runtime / rust-qt / session=true).
+// The Secrets socket is a session-authorized readonly grant; the Secrets
+// daemon confirms its canonical installed manifest via vault.status.installed.
+// No host tool discovery, shell, master password or KDBX access here.
+fn secrets_request(request: &Value) -> Result<Value,String> {
+    let runtime=std::env::var_os("XDG_RUNTIME_DIR")
+        .ok_or("NEEBLES Secrets requiere una sesión de usuario válida")?;
+    let runtime=PathBuf::from(runtime);
+    if !runtime.is_absolute() { return Err("XDG_RUNTIME_DIR no es absoluto".into()); }
+    let socket=runtime.join("neebles-secrets/secrets.sock");
+    let mut stream=UnixStream::connect(socket)
+        .map_err(|_|"NEEBLES Connect requiere NEEBLES Secrets instalado y su servicio activo".to_string())?;
+    stream.set_read_timeout(Some(Duration::from_secs(35))).map_err(|e|e.to_string())?;
+    stream.set_write_timeout(Some(Duration::from_secs(35))).map_err(|e|e.to_string())?;
+    write_frame(&mut stream,request)?;
+    let response=read_frame(&mut stream)?;
+    if response.get("ok").and_then(Value::as_bool)!=Some(true) {
+        let error=response.get("error").and_then(Value::as_str).unwrap_or("unknown");
+        return Err(format!("NEEBLES Secrets rechazó la operación: {error}"));
+    }
+    response.get("data").cloned().ok_or_else(|| "NEEBLES Secrets no devolvió data".to_string())
+}
+fn prepare_vault_install() -> Result<(),String> {
+    // During Lifecycle.install Boss has already published this module's
+    // candidate, but rolls back its installation on a failed operation.
+    module_root()?;
+    // The governed session socket exists only when Secrets service is
+    // actually present. Its absence causes Construction to reject install.
+    let status=secrets_request(&json!({"op":"vault.status"}))?;
+    if status.get("installed").and_then(Value::as_bool)!=Some(true) {
+        return Err("NEEBLES Connect requiere NEEBLES Secrets instalado mediante Boss".into());
+    }
+    if status.get("initialized").and_then(Value::as_bool)!=Some(true) {
+        return Err("Abre NEEBLES Secrets y configura primero la clave maestra".into());
+    }
+    if status.get("locked").and_then(Value::as_bool)!=Some(false) {
+        return Err("Desbloquea NEEBLES Secrets antes de instalar Connect".into());
+    }
+    // Only Secrets owns vault creation, storage, validation and non-overwrite.
+    let created=secrets_request(&json!({"op":"vault.ensure","module":MODULE}))?;
+    if created.get("module").and_then(Value::as_str)!=Some(MODULE)
+       || created.get("exists").and_then(Value::as_bool)!=Some(true) {
+        return Err("Secrets no confirmó la bóveda propia de Connect".into());
+    }
+    Ok(())
+}
+
 fn run() -> Result<(),String> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
-    if arguments.len()!=2 || arguments[0]!="--intent" || arguments[1]!="open" {return Err("usage: neebles-connect --intent open".into());}
+    if arguments.len()==2 && arguments[0]=="--intent" && arguments[1]=="install-vault" {
+        return prepare_vault_install();
+    }
+    if arguments.len()!=2 || arguments[0]!="--intent" || arguments[1]!="open" {return Err("usage: neebles-connect --intent open | install-vault".into());}
     if std::env::var("NEEBLES_MODULE").unwrap_or_else(|_|MODULE.to_string())!=MODULE {
         return Err("Governor module identity mismatch".into());
     }

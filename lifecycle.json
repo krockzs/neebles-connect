@@ -7,13 +7,21 @@
     "governor.disable": "disable",
     "governor.open": "open"
   },
-  "require": {
-    "neebles-secrets": {}
-  },
+  "require": {},
   "objects": {},
   "transitions": {
     "install": {
-      "operations": {}
+      "operations": {
+        "ensure-secrets-vault": {
+          "artillery": "boss.workspace_execution",
+          "objective": "construction.step",
+          "munition": {
+            "step": "install-vault"
+          },
+          "tactics": {},
+          "intelligence": {}
+        }
+      }
     },
     "update": {
       "operations": {}
