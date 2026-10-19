@@ -4,8 +4,8 @@ Primer módulo de acceso remoto NEEBLES OS: Rust 1.98.1 y Qt 6.8.2, SSH/VNC.
 
 **Estado:** candidato productivo para probar instalación gobernada. El éxito de
 F7/F8.3 no constituye certificación de Boss Install/Open/Close/Uninstall.
-No se ofrece todavía Tray, Launcher, inicio automático, funciones de KeePass ni
-nuevas integraciones. El splash de 3 segundos y los assets originales se preservan.
+No se ofrece todavía Tray, Launcher, inicio automático ni
+integración de Secrets. El splash de 3 segundos y los assets originales se preservan.
 
 ## Autoridades y contratos
 
@@ -15,8 +15,7 @@ nuevas integraciones. El splash de 3 segundos y los assets originales se preserv
 - `surfaces.json`: vacío; abrir desde la pestaña administrativa Modules de Boss.
 - `runtime/neebles-connect`: proceso Rust que registra Module IPC y supervisa la ventana Qt hija.
 - `bin/neebles-connect-desktop`: UI Qt de SSH/VNC sin conexión administrativa directa a Boss.
-- CUSTOM V2: `modules.rust-qt`, RootFS `rust-qt`, `keepass-full`, `keepass-minimal`.
-  Solo `rust-qt` se utiliza en Open 1.0.0. Los dos KeePass no son funciones habilitadas.
+- CUSTOM V2: `modules.rust-qt`, exclusivamente RootFS `rust-qt` para SSH/VNC y Qt.
 - Construction: `runtime/construction/neebles-connect.json` en CUSTOM, generado solo
   con el SHA inmutable del commit fuente completo.
 

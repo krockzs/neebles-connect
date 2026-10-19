@@ -45,20 +45,6 @@
       "sha256": "3003e98a5debfdeadc7040a7f715fe9fe6fb67f68deacf6049b54e30f07fc014"
     },
     {
-      "path": "packages/keepassxc-full_2.7.10+dfsg1-1_amd64.deb",
-      "type": "file",
-      "mode": "0o664",
-      "size": 8335848,
-      "sha256": "79c2f771272ff696e7b2ea85806c20cc827d6f9a433f84abb3816fd35632c069"
-    },
-    {
-      "path": "packages/keepassxc-minimal_2.7.10+dfsg1-1_amd64.deb",
-      "type": "file",
-      "mode": "0o664",
-      "size": 7762280,
-      "sha256": "d5532645d9763d0ce3e276ae20aeaff66d300a9fa0d0471d3a898084872c41c1"
-    },
-    {
       "path": "packages/libargon2-1_0~20190702+dfsg-4+b2_amd64.deb",
       "type": "file",
       "mode": "0o664",

@@ -2,7 +2,7 @@ NEEBLES Connect 1.0.0 — first release candidate
 
 Qt 6.8.2 interface for SSH and VNC, with Rust 1.98.1 runtime.
 Boss-governed installation, Open and Uninstall contracts.
-No Tray, login startup or KeePass functionality in version 1.0.0.
+No Tray or login startup in version 1.0.0.
 
 Build and material audits have passed. Installed-system Boss acceptance and
 Close/rollback checks still require separate verification.

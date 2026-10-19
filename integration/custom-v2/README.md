@@ -13,5 +13,5 @@ de Esbirro, materialización Boss, ELF/ABI, permisos y runtime real.
 Ningún fichero aquí autoriza por sí solo una instalación.
 
 Los scripts ejecutables y los informes TXT de trabajo se guardan en Downloads.
-Antes de integrar la variante elegida en CUSTOM V2, revisar la selección
-Full/Minimal, los mundos efectivos y los grants explícitos.
+Antes de integrar un candidato en CUSTOM V2, revisar el mundo SSH/VNC,
+los contratos efectivos y los grants explícitos.

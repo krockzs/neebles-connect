@@ -1,4 +1,4 @@
-NEEBLES CONNECT / MULTI-ROOTFS / MATERIALES CANDIDATOS
+NEEBLES CONNECT / CANDIDATOS / REPORTE HISTÓRICO
 SOLO SE ESCRIBE EN DOWNLOADS. NUNCA SE MODIFICA CUSTOM V2.
 NO APTO PARA PUBLICAR SIN CERTIFICACIÓN DEL BOSS Y ESBIRRO.
 Fecha: 2026-10-14T20:39:38
@@ -39,22 +39,6 @@ Dependencias no resueltas: 0
 Expresiones sin interpretar: 0
 Conflictos/Breaks: 0
 
-=== connect-keys-full ===
-Paquetes Totales: 174
-Essential: 59
-Delta: 115
-Dependencias no resueltas: 0
-Expresiones sin interpretar: 0
-Conflictos/Breaks: 0
-
-=== connect-keys-minimal ===
-Paquetes Totales: 174
-Essential: 59
-Delta: 115
-Dependencias no resueltas: 0
-Expresiones sin interpretar: 0
-Conflictos/Breaks: 0
-
 === GATE DE REFERENCIA CERTIFICADA TEST MODULE ===
 Archivos esperados: 2210
 Archivos reconstruidos: 2210
@@ -64,16 +48,6 @@ Gate extracción de Test Module: IGUALDAD EXACTA
 === connect-vnc FS ===
 DEB DELTA: 125
 ENTRADAS EXTRAÍDAS DELTA: 2915
-COLISIONES ESSENTIAL/DELTA (excluye directorios): 0
-
-=== connect-keys-full FS ===
-DEB DELTA: 115
-ENTRADAS EXTRAÍDAS DELTA: 3405
-COLISIONES ESSENTIAL/DELTA (excluye directorios): 0
-
-=== connect-keys-minimal FS ===
-DEB DELTA: 115
-ENTRADAS EXTRAÍDAS DELTA: 3404
 COLISIONES ESSENTIAL/DELTA (excluye directorios): 0
 
 === ESTADO ===
