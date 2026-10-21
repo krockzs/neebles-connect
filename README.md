@@ -1,38 +1,40 @@
-# N.E.E.B.L.E.S. Connect 1.0.0
+# N.E.E.B.L.E.S. Connect 1.0.1
 
-Primer módulo de acceso remoto NEEBLES OS: Rust 1.98.1 y Qt 6.8.2, SSH/VNC.
+Módulo de acceso remoto SSH/VNC integrado (Qt 6.8.2, Rust 1.98.1). Instalación y ejecución gobernadas por Boss mediante CUSTOM V2 y RuntimeLease.
 
-**Estado:** candidato productivo para probar instalación gobernada. El éxito de
-F7/F8.3 no constituye certificación de Boss Install/Open/Close/Uninstall.
-No se ofrece todavía Tray, Launcher, inicio automático ni
-integración de Secrets. El splash de 3 segundos y los assets originales se preservan.
+## Modelo 1.0.1
 
-## Autoridades y contratos
+- **Quick Connect:** conecta mediante host, usuario, clave y puerto manuales, sin guardar credenciales; no depende de desbloquear Secrets.
+- **My Connect:** guarda y recupera equipos únicamente por la API cifrada de **NEEBLES Secrets 1.0.2**, en `vault-connect.kdbx`. Alta, consulta, actualización y eliminación de registros. Cada registro identifica host, nombre, usuario, contraseña y puertos SSH/VNC.
+- **Bloqueo de Secrets:** deshabilita My Connect, cierra solo las pestañas y conexiones abiertas desde My Connect, elimina metadatos cargados y vuelve al Dashboard si corresponde. Las conexiones Quick permanecen.
+- **Arranque:** puede abrirse con Secrets bloqueado. My Connect recupera registros después de desbloquear, sin reconectar automáticamente.
+- **Instalación:** `lifecycle.json` solicita a Secrets la bóveda del módulo mediante `construction.step/install-vault`. Los datos KDBX y la Master Key están fuera del repositorio y deben persistir durante Update.
 
-- `manifest.json` schema 4: ID `neebles-connect`, versión `1.0.0`, entrypoint `runtime/neebles-connect`.
-- `lifecycle.json`: `governor.open` delega a `construction.step/open-runtime`.
-- `manifest.uninstall`: `main: governor`, sin servicios extras, Settings a elección del usuario.
-- `surfaces.json`: vacío; abrir desde la pestaña administrativa Modules de Boss.
-- `runtime/neebles-connect`: proceso Rust que registra Module IPC y supervisa la ventana Qt hija.
-- `bin/neebles-connect-desktop`: UI Qt de SSH/VNC sin conexión administrativa directa a Boss.
-- CUSTOM V2: `modules.rust-qt`, exclusivamente RootFS `rust-qt` para SSH/VNC y Qt.
-- Construction: `runtime/construction/neebles-connect.json` en CUSTOM, generado solo
-  con el SHA inmutable del commit fuente completo.
+No se usa `profiles.dev.json`, SQLite, credenciales en Settings ni viewers externos. La finalidad de `vault-general.kdbx` aún no está definida: Connect **no** debe usarla.
 
-Boss es dueño de Install, Update, Uninstall, Governor, Module IPC, MaterialBinding y RuntimeLease.
-NO instalar bibliotecas con APT desde el módulo, ni reutilizar servicios legacy de Test Module.
+## Archivos productivos
 
-## Publicación y aceptación
+- `runtime/src/main.rs` → IPC con Boss y supervisor de UI.
+- `ui/desktop/` → Dashboard, Quick Connect, My Connect, SSH/libssh2, VNC/libvncclient y terminal libvterm.
+- `manifest.json`, `lifecycle.json`, `contracts/`, `languages/`, `settings/` → contratos gobernados.
+- `tooling/esbirro/build_connect_101.py` → única receta de Qt 6.8.2 controlado, respaldada por SHA256 de material CUSTOM V2; genera DESTDIR en caché, nunca altera `/opt`.
+- `tests/test_connect_101_contracts.py` → controles estructurales actuales, no equivalen a aceptación real.
 
-1. Publicar únicamente el source productivo y registrar SHA completo de Connect.
-2. Fijar el SHA idéntico en `fetch` y `checkout` de CUSTOM Construction; publicar CUSTOM.
-3. Actualizar exclusivamente `registry/modules.json` de Boss al SHA Connect publicado.
-4. Instalar por Boss UI → Modules. Comprobar Open, cierre con X y Uninstall con
-   preservación/eliminación de Settings, y registrar evidencias físicas.
-5. Solo con estas pruebas acreditadas considerar el módulo instalado y funcional.
+## Compilación y certificación
 
-No se publica el histórico de tests M1–M6/F1–F8 ni archivos de Downloads.
-Conservar código, iconos, hashes y baseline existente.
+Rust 1.0.1 ya compiló en el Ryzen (`cargo test --locked` y `cargo build --locked --release` GREEN). Corresponde compilar **la UI Qt modificada con Esbirro**, certificar ELF y después incorporar los binarios Release al repositorio. **No se recompila Boss, Secrets ni toda la distribución**.
 
-Referencias: Test Module README 1.2.12; Boss README 2.0.0; CUSTOM V2 README;
-`portable/esbirro/README.md`. Los prototipos e investigaciones no son autoridad productiva.
+```bash
+python3 tooling/esbirro/build_connect_101.py --preview
+python3 tooling/esbirro/build_connect_101.py --build
+python3 -m unittest discover -s tests -p 'test_connect_101_contracts.py' -v
+```
+
+Al publicar: commit Connect 1.0.1 → pin SHA en CUSTOM V2 `fetch/checkout` → actualización de Registry Boss → instalación/actualización oficial por Boss → pruebas reales de Quick/My, lock/unlock y persistencia KDBX. Nunca modificar `/opt/neebles` a mano.
+
+## Riesgos a validar en instalación real
+
+- Autorización IPC de Secrets para el ejecutable Connect realmente instalado bajo RuntimeLease.
+- VNC y SSH simultáneos desde My; bloqueo remoto cierra My sin interrumpir Quick.
+- Persistencia, operaciones KDBX y no exposición de secretos por logs o archivos secundarios.
+- Rendimiento de VNC: procesamiento gráfico en el hilo Qt sigue como limitación conocida.

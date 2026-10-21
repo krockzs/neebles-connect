@@ -350,12 +350,18 @@ void VncPane::updateUi(const QString& status) {
 }
 
 void VncPane::connectNow(const QString& password) {
+    if (accessGuard_ && !accessGuard_()) return;
     if (client_ || host_.trimmed().isEmpty() || port_ < 1 || port_ > 65535) return;
     if (host_.contains(':') || host_.contains('/') || host_.contains(' ')) {
         updateUi(QStringLiteral("Host inválido: se admite IPv4 o hostname DNS"));
         return;
     }
-    oneShotPassword_ = password.toUtf8();
+    QString provided=password;
+    if (provided.isEmpty() && credentialProvider_ && !credentialProvider_(provided)) {
+        provided.fill(QChar('\0')); return;
+    }
+    oneShotPassword_ = provided.toUtf8();
+    provided.fill(QChar('\0')); provided.clear();
     client_ = rfbGetClient(8, 3, 4);
     if (!client_) { updateUi(QStringLiteral("Error al crear cliente RFB")); return; }
     client_->format.bigEndian = FALSE;

@@ -6,3 +6,6 @@
 /cmake-build-*/
 **/__pycache__/
 **/*.pyc
+/runtime/target/
+*.pyc
+/dist/

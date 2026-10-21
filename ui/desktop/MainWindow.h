@@ -3,6 +3,7 @@
 #include <QMainWindow>
 #include <QString>
 #include <QVector>
+#include <QJsonObject>
 
 class QTabWidget;
 class QStackedWidget;
@@ -20,6 +21,7 @@ struct ConnectProfile {
     QString name;
     QString host;
     QString sshUser;
+    int defaultProtocol = 1; // 0 = SSH, 1 = VNC
     int sshPort = 22;
     int vncPort = 5900;
 };
@@ -42,11 +44,14 @@ private:
     void editProfile(const ConnectProfile&);
     void deleteProfile(const ConnectProfile&);
     void openProfile(const ConnectProfile&, int protocol, const QString& password = {});
+    void closeSavedSessions();
+    bool ensureVaultReady();
+    bool readSecret(const QString& id, QJsonObject& value);
+    void clearSensitiveEditor();
     void openQuick();
     void closeTab(int index);
     bool isOpen(const QString& id) const;
     bool loadProfiles();
-    bool writeProfiles();
     void resetEditor();
 
     QString moduleRoot_;
@@ -68,6 +73,8 @@ private:
     QLineEdit* editName_ = nullptr;
     QLineEdit* editHost_ = nullptr;
     QLineEdit* editSshUser_ = nullptr;
+    QLineEdit* editPassword_ = nullptr;
+    QComboBox* editProtocol_ = nullptr;
     QSpinBox* editSshPort_ = nullptr;
     QSpinBox* editVncPort_ = nullptr;
     QPushButton* saveButton_ = nullptr;
@@ -76,4 +83,5 @@ private:
     QPushButton* missingVault_ = nullptr;
     int vaultExists_ = -1; // -1 unknown, 0 missing, 1 exists
     bool vaultReady_ = false;
+    bool vaultLoading_ = false;
 };

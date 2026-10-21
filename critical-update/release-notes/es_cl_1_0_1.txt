@@ -1,0 +1,1 @@
+Connect 1.0.1: My Connect integrado exclusivamente con la bóveda cifrada de Secrets. Crear, editar, eliminar y abrir equipos guardados. El bloqueo de Secrets cierra sesiones My; Quick Connect continúa disponible.

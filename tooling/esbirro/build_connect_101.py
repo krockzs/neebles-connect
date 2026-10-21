@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""F3 link-hotfix: reproducible *candidate* from git-visible Connect sources + pinned CUSTOM DEBs.
+"""Connect 1.0.1: controlled Qt candidate from local Connect sources + hashed CUSTOM material.
 
 No sudo, network, host Qt/pkg-config fallback, repository writes or Boss launch.
-`--build` writes only under ~/.cache/neebles/connect-f3-builds/.
+`--build` writes only under ~/.cache/neebles/connect-101-qt-builds/.
 COMPILATION DOES NOT IMPLY ELF closure, world certification or Boss install.
 """
 from __future__ import annotations
@@ -15,6 +15,15 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+
+DEBS = {
+  'libvncserver-dev': ('0.9.15+dfsg-1+deb13u2','e7f41ea5630eebc9d66100aa63a185640d0120fab39b16cb63f892d7e301b43f','runtime/modules/packages/libvncserver-dev_0.9.15+dfsg-1+deb13u2_amd64.deb','build-only'),
+  'libvncclient1': ('0.9.15+dfsg-1+deb13u2','13395ab10fb0cffb79e453778b22a26c1faa356fed995a6f25628238a639797a','runtime/modules/packages/libvncclient1_0.9.15+dfsg-1+deb13u2_amd64.deb','runtime-existing'),
+  'libssh2-1-dev': ('1.11.1-1+deb13u2','d3267add3544b2ad8fc28b9f57c462e85448045a049725e97e4ba1e59922ea7b','portable/esbirro/materials/neebles-connect/libssh2-1-dev_1.11.1-1+deb13u2_amd64.deb','build-only'),
+  'libssh2-1t64': ('1.11.1-1+deb13u2','dbb1024c192d4d292b7cfa902b96076cfe81b56a5eed4fb28da36e8bf543e49a','runtime/modules/packages/libssh2-1t64_1.11.1-1+deb13u2_amd64.deb','runtime-existing'),
+  'libvterm-dev': ('0.3.3-3+b1','bc9345ef6a2e9ae9ec255588c79d563ab63dd0009b2a6b0a25a841f09e55facb','portable/esbirro/materials/neebles-connect/libvterm-dev_0.3.3-3+b1_amd64.deb','build-only'),
+  'libvterm0': ('0.3.3-3+b1','91886654a1d1e157e3a43c085048ffe23a255fe25211b2e7d781b38f69a1f911','runtime/modules/packages/libvterm0_0.3.3-3+b1_amd64.deb','runtime-candidate'),
+}
 
 SOURCE_FILES = ('ui/desktop/main.cpp','ui/desktop/MainWindow.cpp','ui/desktop/MainWindow.h',
     'ui/desktop/VncPane.cpp','ui/desktop/VncPane.h','ui/desktop/SshPane.cpp',
@@ -79,51 +88,38 @@ def check_deb(path:Path, name:str, version:str, digest:str)->None:
     actual=[deb_field(path,k) for k in ('Package','Version','Architecture')]
     if actual != [name,version,'amd64']:raise RuntimeError('DEB incompatible '+name+': '+repr(actual))
 
-def audit(connect:Path, custom:Path)->list[dict]:
-    if not (connect/'.git').is_dir() or not (custom/'.git').is_dir():raise RuntimeError('Requiere checkouts Git Connect/CUSTOM')
-    if json.loads((connect/'manifest.json').read_text())['version']!='1.0.0':raise RuntimeError('Version Connect inesperada')
-    f2=json.loads((connect/'tooling/esbirro/f2-source-lock.json').read_text())
-    f3=json.loads((connect/'tooling/esbirro/f3-source-lock.json').read_text())
-    past=json.loads((connect/'tooling/esbirro/m6.1-source-lock.json').read_text())
-    for name, digest in past['files'].items():
-        expected=f3['migrated_files'].get(name, f2['migrated_files'].get(name,digest))
-        if sha(connect/name)!=expected:raise RuntimeError('Fuente M6.1/F3 alterada: '+name)
-    if sha(connect/'ui/desktop/CMakeLists.txt') != f3['migrated_files']['ui/desktop/CMakeLists.txt']:
-        raise RuntimeError('CMake F3 alterado')
-    import importlib.util
-    audit_f2=connect/'tooling/esbirro/auditar_cierre_f2.py'
-    spec=importlib.util.spec_from_file_location('neebles_f2_audit',audit_f2)
-    if spec is None or spec.loader is None:raise RuntimeError('F2 auditor missing')
-    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+def audit(connect: Path, custom: Path) -> list[dict]:
+    if not (connect/'.git').is_dir() or not (custom/'.git').is_dir():
+        raise RuntimeError('Requires local Git repos Connect and CUSTOM')
+    if json.loads((connect/'manifest.json').read_text())['version'] != '1.0.1':
+        raise RuntimeError('Connect version is not 1.0.1')
     items=[]
-    for name,(version,digest,relative,role) in module.DEBS.items():
+    for name,(version,digest,relative,role) in DEBS.items():
         check_deb(custom/relative,name,version,digest)
         items.append(dict(package=name,version=version,sha256=digest,path=str(custom/relative),role=role))
-        print('OK PACKAGE',name,version,digest[:18])
+        print('OK MATERIAL',name,version,flush=True)
     name,version,digest,rel=SASL
     check_deb(custom/rel,name,version,digest)
     items.append(dict(package=name,version=version,sha256=digest,path=str(custom/rel),role='build-only'))
-    print('OK PACKAGE',name,version,digest[:18],'(SHA Debian verificado)')
     check_custom_membership(custom/'runtime/manifests/modules/neebles-connect.packages.tsv')
-    for name, version, digest, filename, soname in VNC_LINK_CLOSURE:
-        package = custom/'runtime/modules/packages'/filename
-        check_deb(package, name, version, digest)
-        items.append(dict(package=name,version=version,sha256=digest,path=str(package),role='runtime-existing'))
-        print('OK LINK CLOSURE',name,version,soname,digest[:18])
+    for name,version,digest,filename,soname in VNC_LINK_CLOSURE:
+        material=custom/'runtime/modules/packages'/filename
+        check_deb(material,name,version,digest)
+        items.append(dict(package=name,version=version,sha256=digest,path=str(material),role='runtime-existing'))
+        print('OK ELF MATERIAL',name,soname,flush=True)
     sysroot=custom/'build_sysroot_6.8.2'
     needed={
-        'Qt6 Config':sysroot/'usr/lib/x86_64-linux-gnu/cmake/Qt6/Qt6Config.cmake',
-        'Qt6 Widgets 6.8.2':sysroot/'usr/lib/x86_64-linux-gnu/libQt6Widgets.so.6.8.2',
-        'GCC 14':sysroot/'usr/bin/x86_64-linux-gnu-g++-14',
-        'GCC builtin include':sysroot/'usr/lib/gcc/x86_64-linux-gnu/14/include',
-        'C++ std headers':sysroot/'usr/include/c++/14',
+        'Qt6':sysroot/'usr/lib/x86_64-linux-gnu/cmake/Qt6/Qt6Config.cmake',
+        'Qt6 Widgets':sysroot/'usr/lib/x86_64-linux-gnu/libQt6Widgets.so.6.8.2',
+        'GCC14':sysroot/'usr/bin/x86_64-linux-gnu-g++-14',
+        'GCC builtin':sysroot/'usr/lib/gcc/x86_64-linux-gnu/14/include',
+        'C++ std':sysroot/'usr/include/c++/14',
     }
     for label,path in needed.items():
-        if not path.exists():raise RuntimeError('No está en sysroot: '+label+' '+str(path))
-        print('OK ESBIRRO',label)
-    if not os.access(needed['GCC 14'],os.X_OK):raise RuntimeError('GCC controlado no ejecutable')
+        if not path.exists(): raise RuntimeError('Missing controlled sysroot '+label+': '+str(path))
+        print('OK ESBIRRO',label,flush=True)
     for rel in SOURCE_FILES:
-        if not (connect/rel).is_file():raise RuntimeError('Falta fuente '+rel)
+        if not (connect/rel).is_file(): raise RuntimeError('Missing Connect 1.0.1 source '+rel)
     return items
 
 def _merge_root(extracted:Path,dest:Path)->None:
@@ -231,7 +227,7 @@ def _elf_inventory(binary:Path,overlay:Path,sysroot:Path)->list[str]:
 def build(connect:Path,custom:Path,items:list[dict])->Path:
     for command in ('cmake','readelf','dpkg-deb'):
         if shutil.which(command) is None:raise RuntimeError('Missing utility '+command)
-    stage_base=Path.home()/'.cache/neebles/connect-f3-builds'
+    stage_base=Path.home()/'.cache/neebles/connect-101-qt-builds'
     stage_base.mkdir(parents=True,exist_ok=True)
     candidate=stage_base/('candidate_'+datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
     candidate.mkdir(mode=0o700)
@@ -305,10 +301,10 @@ def main()->int:
     p.add_argument('--custom',type=Path,default=Path.home()/'NEEBLES/neebles-custom')
     args=p.parse_args()
     try:
-        print('=== CONNECT 1.0.0 / ESBIRRO F3 / NOT BOSS CERTIFIED ===',flush=True)
+        print('=== CONNECT 1.0.1 / ESBIRRO QT / STAGED, NOT INSTALLED ===',flush=True)
         connect=args.connect.expanduser().resolve();custom=args.custom.expanduser().resolve()
         items=audit(connect,custom)
-        print('PRECHECK OK: ten pinned packages (seven F3 + three ELF closures); source SHA; controlled Qt/GCC',flush=True)
+        print('PRECHECK OK: ten pinned packages; controlled Qt 6.8.2/GCC14; active production sources',flush=True)
         if args.preview:print('PREVIEW OK: no modifications, run --build next',flush=True)
         else:build(connect,custom,items)
         return 0

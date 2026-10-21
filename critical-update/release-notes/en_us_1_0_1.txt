@@ -1,0 +1,1 @@
+Connect 1.0.1: My Connect now uses the Secrets encrypted vault exclusively. Create, edit, delete and open stored hosts. Locking Secrets closes My sessions; Quick Connect remains available.

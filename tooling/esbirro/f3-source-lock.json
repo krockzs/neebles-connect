@@ -1,9 +1,0 @@
-{
-  "schema": 1,
-  "module": "neebles-connect",
-  "version": "1.0.0",
-  "status": "F3_BUILD_RECIPE_NOT_CUSTOM_V2_CERTIFIED",
-  "migrated_files": {
-    "ui/desktop/CMakeLists.txt": "0f321ac4697b1a33f47b7cccee17c3953397c8a9d9f9c2b42843f9f6a8e6dfd9"
-  }
-}

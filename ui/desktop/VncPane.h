@@ -6,6 +6,8 @@
 #include <QRect>
 #include <QWidget>
 #include <cstdint>
+#include <functional>
+#include <utility>
 #include <vector>
 
 #include <rfb/rfbclient.h>
@@ -56,6 +58,8 @@ public:
     VncPane(QString host, int port, QWidget* parent = nullptr);
     ~VncPane() override;
     void connectNow(const QString& oneShotPassword = {});
+    void setAccessGuard(std::function<bool()> guard) { accessGuard_ = std::move(guard); }
+    void setCredentialProvider(std::function<bool(QString&)> provider) { credentialProvider_ = std::move(provider); }
     void disconnectNow();
     bool connected() const { return client_ != nullptr && authenticated_; }
 private:
@@ -69,6 +73,8 @@ private:
     void poll();
     void updateUi(const QString& status);
 
+    std::function<bool()> accessGuard_;
+    std::function<bool(QString&)> credentialProvider_;
     QString host_;
     int port_;
     VncScreen* screen_ = nullptr;

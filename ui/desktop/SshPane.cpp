@@ -191,6 +191,7 @@ bool SshPane::reviewHostKey(const QString& fp) {
 }
 
 void SshPane::connectNow(const QString& oneShotPassword) {
+    if (accessGuard_ && !accessGuard_()) return;
     if (running_.load()) return;
     if (worker_.joinable()) worker_.join();
     if (user_.trimmed().isEmpty()) {
@@ -198,6 +199,9 @@ void SshPane::connectNow(const QString& oneShotPassword) {
         return;
     }
     QString password=oneShotPassword;
+    if (password.isEmpty() && credentialProvider_ && !credentialProvider_(password)) {
+        password.fill(QChar('\0')); return;
+    }
     if (password.isEmpty()) {
         bool ok=false;
         password=QInputDialog::getText(this,QStringLiteral("Autenticación SSH"),

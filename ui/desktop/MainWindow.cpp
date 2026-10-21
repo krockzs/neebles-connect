@@ -1,6 +1,4 @@
-// NEEBLES Connect desktop shell, milestone 1.
-// Only VNC transport is wired. SSH is explicitly unimplemented, not simulated.
-// Profiles are DEVELOPMENT-ONLY local metadata; Boss-owned persistence pending.
+// NEEBLES Connect 1.0.1. Saved host credentials live solely in Secrets vault-connect.
 #include "MainWindow.h"
 #include "VncPane.h"
 #include "SshPane.h"
@@ -8,8 +6,6 @@
 #include <QComboBox>
 #include <QDir>
 #include <QFile>
-#include <QFileDevice>
-#include <QFileInfo>
 #include <QFormLayout>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -20,6 +16,7 @@
 #include <QStandardPaths>
 #include <QtEndian>
 #include <QJsonArray>
+#include <QJsonValue>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
@@ -30,12 +27,10 @@
 #include <QPixmap>
 #include <QSize>
 #include <QPushButton>
-#include <QSaveFile>
 #include <QScrollArea>
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStackedWidget>
-#include <QStandardPaths>
 #include <QStatusBar>
 #include <QTabBar>
 #include <QTabWidget>
@@ -79,19 +74,19 @@ QJsonObject secretsRpc(const QJsonObject& message) {
     if(runtime.isEmpty())return {};
     QLocalSocket socket;
     socket.connectToServer(QDir(runtime).filePath(QStringLiteral("neebles-secrets/secrets.sock")));
-    if(!socket.waitForConnected(250))return {};
+    if(!socket.waitForConnected(650))return {};
     const QByteArray body=QJsonDocument(message).toJson(QJsonDocument::Compact);
     if(body.isEmpty()||body.size()>16384)return {};
     const quint32 n=quint32(body.size());
     char prefix[4]={char((n>>24)&255),char((n>>16)&255),char((n>>8)&255),char(n&255)};
     if(socket.write(prefix,4)!=4||socket.write(body)!=body.size())return {};
-    if(!socket.waitForBytesWritten(350))return {};
+    if(!socket.waitForBytesWritten(1500))return {};
     auto readExact=[&socket](int len)->QByteArray {
         QByteArray out;
         while(out.size()<len){
             const QByteArray part=socket.read(len-out.size());
             if(part.isEmpty()){
-                if(!socket.waitForReadyRead(400))return {};
+                if(!socket.waitForReadyRead(35000))return {};
             }else out.append(part);
         }
         return out;
@@ -125,12 +120,6 @@ QString secretsLabel(const QString& root,const QString& key) {
     }
     return code==QStringLiteral("es_CL")?QStringLiteral("Requiere desbloqueo"):
                                                QStringLiteral("Requires unlock");
-}
-
-QString profilesFile() {
-    const QString root = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    if (root.isEmpty()) return {};
-    return QDir(root).filePath(QStringLiteral("profiles.dev.json"));
 }
 
 } // namespace
@@ -243,19 +232,17 @@ MainWindow::MainWindow(QString moduleRoot, QString version, QWidget* parent)
     tabs_->tabBar()->setTabButton(0, QTabBar::LeftSide, nullptr);
     tabs_->tabBar()->setTabData(0, QStringLiteral("fixed:admin"));
     setCentralWidget(root);
-    statusBar()->showMessage(QStringLiteral("Desarrollo · SSH/VNC de laboratorio · sin Governor"));
+    statusBar()->showMessage(QStringLiteral("Connect 1.0.1 · Quick libre · My protegido por Secrets"));
     QObject::connect(sidebarToggle_, &QPushButton::clicked, this, [this]() { toggleSidebar(); });
     QObject::connect(sidebarReveal_, &QPushButton::clicked, this, [this]() { toggleSidebar(); });
     QObject::connect(tabs_, &QTabWidget::tabCloseRequested, this, [this](int index) { closeTab(index); });
     QObject::connect(tabs_, &QTabWidget::currentChanged, this, [this](int) { syncNavigation(); });
 
-    if (!loadProfiles())
-        statusBar()->showMessage(QStringLiteral("No se pudieron leer los perfiles locales de desarrollo"));
     refreshSaved();
     showAdmin(kDashboard);
     QTimer::singleShot(0,this,[this](){refreshSecretsAccess();});
     auto* monitor=new QTimer(this);
-    monitor->setInterval(2500);
+    monitor->setInterval(1000);
     connect(monitor,&QTimer::timeout,this,[this](){refreshSecretsAccess();});
     monitor->start();
 }
@@ -274,6 +261,10 @@ void MainWindow::syncNavigation() {
 
 void MainWindow::showAdmin(int view) {
     if (view < kDashboard || view > kSaved) return;
+    if ((view == kCreate || view == kSaved) && !ensureVaultReady()) {
+        view = kDashboard;
+        statusBar()->showMessage(QStringLiteral("My Connect requiere Secrets desbloqueado"), 4000);
+    }
     adminStack_->setCurrentIndex(view);
     static const QVector<QString> titles = {
         QStringLiteral("Dashboard"), QStringLiteral("Quick Connect"),
@@ -309,7 +300,7 @@ void MainWindow::buildQuick() {
     quickUser_->setPlaceholderText(QStringLiteral("Solo SSH; opcional para VNC"));
     quickPassword_ = new QLineEdit(page);
     quickPassword_->setEchoMode(QLineEdit::Password);
-    quickPassword_->setPlaceholderText(QStringLiteral("Opcional; si queda vacío, VNC solicitará la clave"));
+    quickPassword_->setPlaceholderText(QStringLiteral("Opcional; SSH o VNC solicitarán la clave si falta"));
     quickProtocol_ = new QComboBox(page);
     quickProtocol_->addItems({QStringLiteral("VNC"), QStringLiteral("SSH")});
     quickPort_ = portBox(page, 5900);
@@ -327,9 +318,8 @@ void MainWindow::buildQuick() {
         [this, action](int selection) {
             quickPort_->setValue(selection == 0 ? 5900 : 22);
             quickPassword_->clear();
-            quickPassword_->setEnabled(selection == 0);
             action->setText(selection == 0 ? QStringLiteral("Conectar VNC temporal")
-                                           : QStringLiteral("Abrir vista SSH (pendiente)"));
+                                           : QStringLiteral("Conectar SSH temporal"));
         });
     action->setText(QStringLiteral("Conectar VNC temporal"));
     QObject::connect(action, &QPushButton::clicked, this, [this]() { openQuick(); });
@@ -345,17 +335,25 @@ void MainWindow::buildEditor() {
     editHost_ = new QLineEdit(page);
     editHost_->setPlaceholderText(QStringLiteral("IP LAN / Tailscale / hostname"));
     editSshUser_ = new QLineEdit(page);
+    editPassword_ = new QLineEdit(page);
+    editPassword_->setEchoMode(QLineEdit::Password);
+    editPassword_->setPlaceholderText(QStringLiteral("Al editar, vacío conserva la clave guardada"));
+    editProtocol_ = new QComboBox(page);
+    editProtocol_->addItems({QStringLiteral("SSH"), QStringLiteral("VNC")});
+    editProtocol_->setCurrentIndex(1);
     editSshPort_ = portBox(page, 22);
     editVncPort_ = portBox(page, 5900);
     form->addRow(QStringLiteral("Nombre del equipo"), editName_);
     form->addRow(QStringLiteral("Dirección"), editHost_);
-    form->addRow(QStringLiteral("SSH · usuario"), editSshUser_);
+    form->addRow(QStringLiteral("Usuario"), editSshUser_);
+    form->addRow(QStringLiteral("Contraseña (cifrada en Secrets)"), editPassword_);
+    form->addRow(QStringLiteral("Protocolo preferido"), editProtocol_);
     form->addRow(QStringLiteral("SSH · puerto"), editSshPort_);
     form->addRow(QStringLiteral("VNC · puerto"), editVncPort_);
     outer->addLayout(form);
     outer->addWidget(new QLabel(QStringLiteral(
-        "Solo se guardan datos del equipo. Las contraseñas NO se almacenan.\n"
-        "Perfiles de desarrollo: persistencia gobernada por Boss pendiente."), page));
+        "Credenciales y equipos se guardan exclusivamente en la bóveda cifrada vault-connect.\n"
+        "No se generan perfiles locales ni se copia la Master Key."), page));
     saveButton_ = new QPushButton(QStringLiteral("Guardar conexión"), page);
     outer->addWidget(saveButton_);
     auto* cancel = new QPushButton(QStringLiteral("Cancelar edición"), page);
@@ -387,7 +385,42 @@ void MainWindow::buildSaved() {
 }
 
 
+void MainWindow::clearSensitiveEditor() {
+    if (editPassword_) editPassword_->clear();
+    editingId_.clear();
+}
+
+void MainWindow::closeSavedSessions() {
+    if (!tabs_) return;
+    // Only My-owned tabs. Quick has a separate quick: namespace and survives lock.
+    for (int i = tabs_->count()-1; i >= 1; --i) {
+        if (!tabs_->tabBar()->tabData(i).toString().startsWith(QStringLiteral("quick:"))) {
+            QWidget* page = tabs_->widget(i);
+            tabs_->removeTab(i);
+            delete page; // VNC / SSH destructors close their owned sessions.
+        }
+    }
+}
+
+bool MainWindow::ensureVaultReady() {
+    if (!vaultReady_) return false;
+    const auto response = secretsRpc(QJsonObject{
+        {QStringLiteral("op"), QStringLiteral("vault.exists")},
+        {QStringLiteral("module"), QStringLiteral("neebles-connect")}
+    });
+    const QJsonObject state = response.value(QStringLiteral("data")).toObject();
+    if (!response.value(QStringLiteral("ok")).toBool() ||
+        !state.value(QStringLiteral("exists")).toBool() ||
+        state.value(QStringLiteral("locked")).toBool(true)) {
+        // Defer UI/session teardown: this guard may be called from a pane callback.
+        QTimer::singleShot(0,this,[this](){ refreshSecretsAccess(); });
+        return false;
+    }
+    return true;
+}
+
 void MainWindow::refreshSecretsAccess() {
+    if (vaultLoading_) return;
     const auto state=secretsRpc(QJsonObject{
         {QStringLiteral("op"),QStringLiteral("vault.exists")},
         {QStringLiteral("module"),QStringLiteral("neebles-connect")}
@@ -396,20 +429,61 @@ void MainWindow::refreshSecretsAccess() {
     const QJsonObject payload=state.value(QStringLiteral("data")).toObject();
     const int nextExists=online?(payload.value(QStringLiteral("exists")).toBool()?1:0):-1;
     const bool nextReady=nextExists==1&&!payload.value(QStringLiteral("locked")).toBool(true);
-    const bool changed=nextExists!=vaultExists_||nextReady!=vaultReady_;
+    const bool wasReady=vaultReady_;
+    const int wasExists=vaultExists_;
     vaultExists_=nextExists;
     vaultReady_=nextReady;
-    if(missingVault_){
-        missingVault_->setVisible(vaultExists_==0); // Only when confirmed missing.
+    if (missingVault_) {
+        missingVault_->setVisible(vaultExists_==0);
         missingVault_->setText(secretsLabel(moduleRoot_,QStringLiteral("vault.requires_unlock")));
     }
-    if(secretsState_){
+    if (secretsState_) {
         secretsState_->setText(vaultExists_<0?QStringLiteral("Secrets service unavailable"):
             vaultExists_==0?QStringLiteral("Vault not installed. Unlock Secrets to create it."):
             vaultReady_?QStringLiteral("Secrets unlocked · My Connections available"):
                         QStringLiteral("Secrets locked · My Connections disabled"));
     }
-    if(changed&&savedList_)refreshSaved();
+    for (int index : {kCreate, kSaved}) {
+        if (index < adminButtons_.size()) adminButtons_[index]->setEnabled(vaultReady_);
+    }
+    if (!vaultReady_) {
+        closeSavedSessions();
+        profiles_.clear();
+        clearSensitiveEditor();
+        if (editName_) editName_->clear();
+        if (editHost_) editHost_->clear();
+        if (editSshUser_) editSshUser_->clear();
+        if (adminStack_ && (adminStack_->currentIndex()==kCreate || adminStack_->currentIndex()==kSaved))
+            showAdmin(kDashboard);
+        if (savedList_ && (wasReady || wasExists != vaultExists_)) refreshSaved();
+    } else if (!wasReady) {
+        vaultLoading_=true;
+        const bool loaded=loadProfiles();
+        vaultLoading_=false;
+        if (!loaded) {
+            vaultReady_=false; // Fail closed on IPC/auth/KDBX errors.
+            for (int index : {kCreate,kSaved}) if (index < adminButtons_.size())
+                adminButtons_[index]->setEnabled(false);
+            if (secretsState_) secretsState_->setText(QStringLiteral("Secrets vault read error · My Connections disabled"));
+            closeSavedSessions();
+            profiles_.clear();
+            if (savedList_) refreshSaved();
+            statusBar()->showMessage(QStringLiteral("Error al cargar My Connect desde Secrets"), 7000);
+        } else if (savedList_) refreshSaved();
+    }
+}
+
+bool MainWindow::readSecret(const QString& id, QJsonObject& value) {
+    const auto response=secretsRpc(QJsonObject{
+        {QStringLiteral("op"),QStringLiteral("secret.get")},
+        {QStringLiteral("module"),QStringLiteral("neebles-connect")},
+        {QStringLiteral("id"),id}
+    });
+    if (!response.value(QStringLiteral("ok")).toBool()) return false;
+    const auto result=response.value(QStringLiteral("data")).toObject();
+    if (result.value(QStringLiteral("id")).toString()!=id || !result.value(QStringLiteral("value")).isObject())return false;
+    value=result.value(QStringLiteral("value")).toObject();
+    return true;
 }
 
 void MainWindow::requestVault() {
@@ -456,11 +530,30 @@ void MainWindow::refreshSaved() {
         auto* layout = new QHBoxLayout(row);
         const QString state = isOpen(profile.id) ? QStringLiteral(" · pestaña abierta") : QString();
         layout->addWidget(new QLabel(profile.name + QStringLiteral("\n") + profile.host + state, row), 1);
-        auto* open = new QPushButton(QStringLiteral("Abrir / Enfocar"), row);
+        auto* ssh = new QPushButton(QStringLiteral("SSH"), row);
+        auto* vnc = new QPushButton(QStringLiteral("VNC"), row);
         auto* edit = new QPushButton(QStringLiteral("Editar"), row);
         auto* remove = new QPushButton(QStringLiteral("Eliminar"), row);
-        layout->addWidget(open); layout->addWidget(edit); layout->addWidget(remove);
-        QObject::connect(open, &QPushButton::clicked, this, [this, profile]() { openProfile(profile, -1); });
+        layout->addWidget(ssh); layout->addWidget(vnc);
+        layout->addWidget(edit); layout->addWidget(remove);
+        QObject::connect(ssh, &QPushButton::clicked, this, [this, profile]() {
+            if (!ensureVaultReady()) return;
+            QJsonObject value;
+            if (!readSecret(profile.id,value) || !ensureVaultReady()) { refreshSecretsAccess(); return; }
+            QString password=value.value(QStringLiteral("password")).toString();
+            value.remove(QStringLiteral("password"));
+            openProfile(profile,kSsh,password);
+            password.fill(QChar('\0')); password.clear();
+        });
+        QObject::connect(vnc, &QPushButton::clicked, this, [this, profile]() {
+            if (!ensureVaultReady()) return;
+            QJsonObject value;
+            if (!readSecret(profile.id,value) || !ensureVaultReady()) { refreshSecretsAccess(); return; }
+            QString password=value.value(QStringLiteral("password")).toString();
+            value.remove(QStringLiteral("password"));
+            openProfile(profile,kVnc,password);
+            password.fill(QChar('\0')); password.clear();
+        });
         QObject::connect(edit, &QPushButton::clicked, this, [this, profile]() { editProfile(profile); });
         QObject::connect(remove, &QPushButton::clicked, this, [this, profile]() { deleteProfile(profile); });
         savedList_->addWidget(row);
@@ -472,6 +565,7 @@ void MainWindow::resetEditor() {
     editingId_.clear();
     editName_->clear(); editHost_->clear(); editSshUser_->clear();
     editSshPort_->setValue(22); editVncPort_->setValue(5900);
+    editProtocol_->setCurrentIndex(1); editPassword_->clear();
     saveButton_->setText(QStringLiteral("Guardar conexión"));
 }
 
@@ -481,57 +575,86 @@ void MainWindow::editProfile(const ConnectProfile& profile) {
                                  QStringLiteral("Cierra la pestaña del equipo antes de editar su conexión."));
         return;
     }
+    if (!ensureVaultReady()) return;
     editingId_ = profile.id;
     editName_->setText(profile.name); editHost_->setText(profile.host);
     editSshUser_->setText(profile.sshUser);
     editSshPort_->setValue(profile.sshPort); editVncPort_->setValue(profile.vncPort);
+    editPassword_->clear(); editProtocol_->setCurrentIndex(profile.defaultProtocol);
     saveButton_->setText(QStringLiteral("Actualizar conexión"));
     showAdmin(kCreate);
 }
 
 void MainWindow::saveProfile() {
-    const QString name = editName_->text().trimmed();
-    const QString host = editHost_->text().trimmed();
-    if (name.isEmpty() || !validHost(host)) {
-        QMessageBox::warning(this, QStringLiteral("Datos inválidos"),
-                             QStringLiteral("Escribe un nombre y una IP IPv4 o hostname válido."));
+    if (!ensureVaultReady()) return;
+    const QString name=editName_->text().trimmed();
+    const QString host=editHost_->text().trimmed();
+    const QString user=editSshUser_->text().trimmed();
+    if (name.isEmpty() || !validHost(host) || user.isEmpty()) {
+        QMessageBox::warning(this,QStringLiteral("Datos inválidos"),
+            QStringLiteral("Nombre, host y usuario son obligatorios."));
         return;
     }
-    ConnectProfile profile;
-    profile.id = editingId_.isEmpty() ? QUuid::createUuid().toString(QUuid::WithoutBraces) : editingId_;
-    profile.name = name; profile.host = host;
-    profile.sshUser = editSshUser_->text().trimmed();
-    profile.sshPort = editSshPort_->value(); profile.vncPort = editVncPort_->value();
-    const QVector<ConnectProfile> before = profiles_;
-    bool found = false;
-    for (ConnectProfile& existing : profiles_) if (existing.id == profile.id) { existing = profile; found = true; break; }
-    if (!found) profiles_.push_back(profile);
-    if (!writeProfiles()) {
-        profiles_ = before;
-        QMessageBox::critical(this, QStringLiteral("No se pudo guardar"),
-            QStringLiteral("Falló la escritura de los perfiles locales. No se aplicaron cambios."));
+    const QString id=editingId_.isEmpty()?
+        QStringLiteral("host-")+QUuid::createUuid().toString(QUuid::WithoutBraces):editingId_;
+    QString password=editPassword_->text();
+    editPassword_->clear();
+    if (!editingId_.isEmpty() && password.isEmpty()) {
+        QJsonObject old;
+        if (!readSecret(id,old)) {
+            QMessageBox::warning(this,QStringLiteral("Secrets"),QStringLiteral("No se pudo recuperar el registro actual."));
+            return;
+        }
+        password=old.value(QStringLiteral("password")).toString();
+        old.remove(QStringLiteral("password"));
+    }
+    if (!ensureVaultReady()) {password.fill(QChar('\0'));return;}
+    QJsonObject value{
+        {QStringLiteral("name"),name},{QStringLiteral("ip"),host},
+        {QStringLiteral("user"),user},{QStringLiteral("password"),password},
+        {QStringLiteral("ssh_port"),editSshPort_->value()},
+        {QStringLiteral("vnc_port"),editVncPort_->value()},
+        {QStringLiteral("protocol"),editProtocol_->currentIndex()==kSsh?QStringLiteral("ssh"):QStringLiteral("vnc")}
+    };
+    const QJsonObject response=secretsRpc(QJsonObject{
+        {QStringLiteral("op"),editingId_.isEmpty()?QStringLiteral("secret.put"):QStringLiteral("secret.update")},
+        {QStringLiteral("module"),QStringLiteral("neebles-connect")},
+        {QStringLiteral("id"),id},{QStringLiteral("value"),value}
+    });
+    password.fill(QChar('\0'));password.clear();
+    value.remove(QStringLiteral("password"));
+    if (!response.value(QStringLiteral("ok")).toBool()) {
+        refreshSecretsAccess();
+        QMessageBox::warning(this,QStringLiteral("Secrets"),
+            QStringLiteral("No se pudo escribir el registro cifrado. No se creó ningún perfil local."));
         return;
     }
     resetEditor();
+    if (!loadProfiles()) {refreshSecretsAccess();return;}
     showAdmin(kSaved);
 }
 
 void MainWindow::deleteProfile(const ConnectProfile& profile) {
+    if (!ensureVaultReady()) return;
     if (isOpen(profile.id)) {
-        QMessageBox::information(this, QStringLiteral("Pestaña abierta"),
-            QStringLiteral("Primero cierra la pestaña de este equipo para terminar sus sesiones."));
+        QMessageBox::information(this,QStringLiteral("Pestaña abierta"),
+            QStringLiteral("Cierra la pestaña antes de eliminar este equipo."));
         return;
     }
-    if (QMessageBox::question(this, QStringLiteral("Eliminar conexión"),
-            QStringLiteral("¿Eliminar el equipo guardado «%1»?").arg(profile.name)) != QMessageBox::Yes) return;
-    const QVector<ConnectProfile> before = profiles_;
-    for (int i = 0; i < profiles_.size(); ++i) if (profiles_[i].id == profile.id) {
-        profiles_.removeAt(i); break;
+    if (QMessageBox::question(this,QStringLiteral("Eliminar conexión"),
+        QStringLiteral("¿Eliminar el equipo guardado «%1»?").arg(profile.name))!=QMessageBox::Yes) return;
+    if (!ensureVaultReady()) return;
+    const QJsonObject response=secretsRpc(QJsonObject{
+        {QStringLiteral("op"),QStringLiteral("secret.delete")},
+        {QStringLiteral("module"),QStringLiteral("neebles-connect")},
+        {QStringLiteral("id"),profile.id}
+    });
+    if (!response.value(QStringLiteral("ok")).toBool()) {
+        refreshSecretsAccess();
+        QMessageBox::warning(this,QStringLiteral("Secrets"),QStringLiteral("No se pudo eliminar la entrada cifrada."));
+        return;
     }
-    if (!writeProfiles()) {
-        profiles_ = before;
-        QMessageBox::critical(this, QStringLiteral("Error"), QStringLiteral("No se pudieron guardar los cambios."));
-    }
+    if (!loadProfiles()) {refreshSecretsAccess();return;}
     refreshSaved();
 }
 
@@ -557,15 +680,33 @@ void MainWindow::openQuick() {
     QString password = quickPassword_->text();
     quickPassword_->clear();
     openProfile(profile, quickProtocol_->currentIndex() == 0 ? kVnc : kSsh, password);
-    password.fill(QChar('\0'));
+    password.fill(QChar('\0')); password.clear();
 }
 
 void MainWindow::openProfile(const ConnectProfile& profile, int protocol, const QString& password) {
+    if (!profile.id.startsWith(QStringLiteral("quick:")) && !ensureVaultReady()) return;
     for (int i = 1; i < tabs_->count(); ++i) if (tabs_->tabBar()->tabData(i).toString() == profile.id) {
         tabs_->setCurrentIndex(i);
         if (protocol >= 0) {
             auto* sub = qobject_cast<QTabWidget*>(tabs_->widget(i));
-            if (sub) sub->setCurrentIndex(protocol);
+            if (sub) {
+                sub->setCurrentIndex(protocol);
+                if (protocol == kVnc) {
+                    QPointer<VncPane> pane(dynamic_cast<VncPane*>(sub->widget(kVnc)));
+                    QString secret=password;
+                    QTimer::singleShot(0,sub,[pane,secret=std::move(secret)]() mutable {
+                        if (pane) pane->connectNow(secret);
+                        secret.fill(QChar('\0'));
+                    });
+                } else if (protocol == kSsh) {
+                    QPointer<SshPane> pane(dynamic_cast<SshPane*>(sub->widget(kSsh)));
+                    QString secret=password;
+                    QTimer::singleShot(0,sub,[pane,secret=std::move(secret)]() mutable {
+                        if (pane) pane->connectNow(secret);
+                        secret.fill(QChar('\0'));
+                    });
+                }
+            }
         }
         return;
     }
@@ -575,7 +716,26 @@ void MainWindow::openProfile(const ConnectProfile& profile, int protocol, const 
     sub->addTab(ssh, QStringLiteral("SSH"));
     auto* vnc = new VncPane(profile.host, profile.vncPort, sub);
     sub->addTab(vnc, QStringLiteral("VNC"));
-    sub->setCurrentIndex(protocol >= 0 ? protocol : kVnc);
+    if (!profile.id.startsWith(QStringLiteral("quick:"))) {
+        ssh->setAccessGuard([this]() { return ensureVaultReady(); });
+        vnc->setAccessGuard([this]() { return ensureVaultReady(); });
+        const QString id=profile.id;
+        auto fromVault=[this,id](QString& password)->bool {
+            if (!ensureVaultReady()) return false;
+            QJsonObject record;
+            if (!readSecret(id,record)) return false;
+            password=record.value(QStringLiteral("password")).toString();
+            record.remove(QStringLiteral("password"));
+            if (!ensureVaultReady()) {
+                password.fill(QChar('\0')); password.clear();
+                return false;
+            }
+            return true;
+        };
+        ssh->setCredentialProvider(fromVault);
+        vnc->setCredentialProvider(fromVault);
+    }
+    sub->setCurrentIndex(protocol >= 0 ? protocol : profile.defaultProtocol);
     const int index = tabs_->addTab(sub, profile.name);
     tabs_->tabBar()->setTabData(index, profile.id);
     tabs_->setCurrentIndex(index);
@@ -611,56 +771,37 @@ void MainWindow::closeTab(int index) {
 }
 
 bool MainWindow::loadProfiles() {
-    const QString path = profilesFile();
-    if (path.isEmpty()) return false;
-    QFile source(path);
-    if (!source.exists()) return true;
-    if (!source.open(QIODevice::ReadOnly)) return false;
-    QJsonParseError error{};
-    const QJsonDocument doc = QJsonDocument::fromJson(source.readAll(), &error);
-    if (error.error != QJsonParseError::NoError || !doc.isArray()) return false;
+    // Only the authorized installed Qt binary can read these entries from Secrets.
+    if (!vaultReady_) return false;
+    const QJsonObject list=secretsRpc(QJsonObject{
+        {QStringLiteral("op"),QStringLiteral("vault.list")},
+        {QStringLiteral("module"),QStringLiteral("neebles-connect")}
+    });
+    if (!list.value(QStringLiteral("ok")).toBool()) return false;
+    const QJsonValue ids=list.value(QStringLiteral("data")).toObject().value(QStringLiteral("ids"));
+    if (!ids.isArray() || ids.toArray().size()>256) return false;
     QVector<ConnectProfile> loaded;
-    for (const QJsonValue& item : doc.array()) {
-        if (!item.isObject()) return false;
-        const QJsonObject json = item.toObject();
+    for (const QJsonValue& entry : ids.toArray()) {
+        if (!entry.isString()) return false;
+        const QString id=entry.toString();
+        QJsonObject record;
+        if (!readSecret(id,record)) return false;
         ConnectProfile profile;
-        profile.id = json.value("id").toString();
-        profile.name = json.value("name").toString();
-        profile.host = json.value("host").toString();
-        profile.sshUser = json.value("ssh_user").toString();
-        profile.sshPort = json.value("ssh_port").toInt(22);
-        profile.vncPort = json.value("vnc_port").toInt(5900);
+        profile.id=id;
+        profile.name=record.value(QStringLiteral("name")).toString();
+        profile.host=record.value(QStringLiteral("ip")).toString();
+        profile.sshUser=record.value(QStringLiteral("user")).toString();
+        profile.sshPort=record.value(QStringLiteral("ssh_port")).toInt(22);
+        profile.vncPort=record.value(QStringLiteral("vnc_port")).toInt(5900);
+        profile.defaultProtocol=record.value(QStringLiteral("protocol")).toString()==QStringLiteral("ssh")?kSsh:kVnc;
+        record.remove(QStringLiteral("password")); // Credentials never enter cached profiles.
         if (profile.id.isEmpty() || profile.name.isEmpty() || !validHost(profile.host) ||
-            profile.sshPort < 1 || profile.sshPort > 65535 ||
-            profile.vncPort < 1 || profile.vncPort > 65535) return false;
-        for (const ConnectProfile& prior : loaded) if (prior.id == profile.id) return false;
-        loaded.push_back(profile);
+            profile.sshUser.isEmpty() || profile.sshPort<1 || profile.sshPort>65535 ||
+            profile.vncPort<1 || profile.vncPort>65535) return false;
+        for (const auto& prior:loaded) if (prior.id==profile.id) return false;
+        loaded.append(profile);
     }
-    profiles_ = loaded;
+    if (!ensureVaultReady()) return false;
+    profiles_=std::move(loaded); // Replace entire in-memory metadata snapshot.
     return true;
-}
-
-bool MainWindow::writeProfiles() {
-    const QString path = profilesFile();
-    if (path.isEmpty()) return false;
-    const QString folder = QFileInfo(path).absolutePath();
-    if (!QDir().mkpath(folder)) return false;
-    QFile::setPermissions(folder, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
-    QJsonArray items;
-    for (const ConnectProfile& profile : profiles_) {
-        QJsonObject object;
-        object.insert("id", profile.id);
-        object.insert("name", profile.name);
-        object.insert("host", profile.host);
-        object.insert("ssh_user", profile.sshUser);
-        object.insert("ssh_port", profile.sshPort);
-        object.insert("vnc_port", profile.vncPort);
-        items.append(object);
-    }
-    QSaveFile writer(path);
-    if (!writer.open(QIODevice::WriteOnly)) return false;
-    if (!writer.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)) return false;
-    const QByteArray data = QJsonDocument(items).toJson(QJsonDocument::Indented);
-    if (writer.write(data) != data.size()) return false;
-    return writer.commit();
 }
