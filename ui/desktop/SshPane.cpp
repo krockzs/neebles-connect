@@ -1,6 +1,7 @@
 #include "SshPane.h"
 #include "SshTerminal.h"
 
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
@@ -14,6 +15,7 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QMetaObject>
+#include <QPointer>
 #include <QPushButton>
 #include <QSaveFile>
 #include <QStandardPaths>
@@ -26,12 +28,17 @@
 #include <cstring>
 #include <fcntl.h>
 #include <netdb.h>
+#ifdef __linux__
+#include <netinet/tcp.h>
+#endif
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include <thread>
+#include <system_error>
 #include <mutex>
 #include <utility>
 
@@ -116,7 +123,18 @@ int connectSocket(const QByteArray& host,int port,std::atomic<bool>& active) {
                 break;
             }
         }
-        if (connected>=0) break;
+        if (connected>=0) {
+            // Detect dead peers after remote restart / path loss.
+            const int enabled=1;
+            ::setsockopt(fd,SOL_SOCKET,SO_KEEPALIVE,&enabled,sizeof(enabled));
+#ifdef __linux__
+            const int idle=15, interval=5, probes=3;
+            ::setsockopt(fd,IPPROTO_TCP,TCP_KEEPIDLE,&idle,sizeof(idle));
+            ::setsockopt(fd,IPPROTO_TCP,TCP_KEEPINTVL,&interval,sizeof(interval));
+            ::setsockopt(fd,IPPROTO_TCP,TCP_KEEPCNT,&probes,sizeof(probes));
+#endif
+            break;
+        }
         ::close(fd);
     }
     ::freeaddrinfo(addresses);
@@ -154,46 +172,103 @@ SshPane::SshPane(QString host,int port,QString username,QWidget* parent)
     layout->addWidget(terminal_,1);
     terminal_->setSendHandler([this](QByteArray b){sendBytes(std::move(b));});
     terminal_->setResizeHandler([this](int rows,int cols){requestSize(rows,cols);});
-    QObject::connect(connect_,&QPushButton::clicked,this,[this](){connectNow();});
+    QObject::connect(connect_,&QPushButton::clicked,this,[this](){
+        if (connectRequestHandler_) connectRequestHandler_();
+        else connectNow();
+    });
     QObject::connect(disconnect_,&QPushButton::clicked,this,[this](){disconnectNow();});
 }
 
 SshPane::~SshPane() { disconnectNow(); }
 
-void SshPane::postStatus(const QString& status) {
-    QMetaObject::invokeMethod(this,[this,status]() {
-        status_->setText(status);
-        if (!running_.load()) {connect_->setEnabled(true);disconnect_->setEnabled(false);}
-    },Qt::QueuedConnection);
+bool SshPane::copySelectedText() const {
+    return terminal_ && connected() && terminal_->copySelectionToClipboard();
 }
 
-void SshPane::postBytes(const QByteArray& bytes) {
-    QMetaObject::invokeMethod(this,[this,bytes]() {terminal_->receive(bytes);},Qt::QueuedConnection);
+void SshPane::postStatus(const SessionPtr& state, const QPointer<SshPane>& owner,
+                         const QString& status) {
+    // The detached worker never dereferences QWidget. Queued callbacks run
+    // on Qt's main thread and discard stale sessions after reconnect/close.
+    if (auto* app = QCoreApplication::instance()) {
+        QMetaObject::invokeMethod(app, [state,owner,status]() {
+            if (!owner || owner->session_ != state || state->cancelled.load()) return;
+            owner->status_->setText(status);
+            if (!state->running.load()) {
+                owner->connect_->setEnabled(true);
+                owner->disconnect_->setEnabled(false);
+            }
+        }, Qt::QueuedConnection);
+    }
 }
 
-void SshPane::requestSize(int rows,int cols) {rows_.store(rows);cols_.store(cols);}
+void SshPane::postBytes(const SessionPtr& state, const QPointer<SshPane>& owner,
+                        const QByteArray& bytes) {
+    // Backpressure: never enqueue an unbounded number of terminal updates if
+    // Qt temporarily cannot repaint. Dropped output does not affect SSH I/O.
+    constexpr int kUiPendingLimit = 4 * 1024 * 1024;
+    const int count = int(bytes.size());
+    if (count == 0 || count > kUiPendingLimit) return;
+    const int previous = state->pendingUiBytes.fetch_add(count);
+    if (previous > kUiPendingLimit - count) {
+        state->pendingUiBytes.fetch_sub(count);
+        return;
+    }
+    if (auto* app = QCoreApplication::instance()) {
+        QMetaObject::invokeMethod(app, [state,owner,bytes,count]() {
+            state->pendingUiBytes.fetch_sub(count);
+            if (!owner || owner->session_ != state || state->cancelled.load()) return;
+            owner->terminal_->receive(bytes);
+        }, Qt::QueuedConnection);
+    } else {
+        state->pendingUiBytes.fetch_sub(count);
+    }
+}
+
+void SshPane::requestSize(int rows,int cols) {
+    if (session_) {
+        session_->rows.store(rows);
+        session_->cols.store(cols);
+    }
+}
 
 void SshPane::sendBytes(QByteArray bytes) {
-    if (!running_.load() || bytes.isEmpty()) return;
-    std::lock_guard<std::mutex> lock(outputLock_);
-    outbound_.push_back(std::move(bytes));
+    auto state=session_;
+    if (!state || !state->running.load() || bytes.isEmpty()) return;
+    std::lock_guard<std::mutex> lock(state->outputLock);
+    // Bound terminal input queued during stalled/disconnected networks.
+    constexpr size_t kMaxPendingWrites=256;
+    if (state->outbound.size() < kMaxPendingWrites)
+        state->outbound.push_back(std::move(bytes));
 }
 
-bool SshPane::reviewHostKey(const QString& fp) {
+bool SshPane::reviewHostKey(const SessionPtr& state,
+                            const QPointer<SshPane>& owner,
+                            const QString& host, int port,
+                            const QString& fingerprint) {
     auto verdict=std::make_shared<std::atomic<int>>(0);
-    QMetaObject::invokeMethod(this,[this,fp,verdict]() {
-        const bool accepted=reviewPin(host_,port_,fp,this);
-        verdict->store(accepted?1:-1);
-    },Qt::QueuedConnection);
-    while(running_.load() && verdict->load()==0)
+    if (auto* app = QCoreApplication::instance()) {
+        QMetaObject::invokeMethod(app, [state,owner,verdict,host,port,fingerprint]() {
+            if (!owner || owner->session_ != state || !state->running.load()) {
+                verdict->store(-1);
+                return;
+            }
+            const bool accepted=reviewPin(host,port,fingerprint,owner);
+            verdict->store(accepted?1:-1);
+        }, Qt::QueuedConnection);
+    } else return false;
+    // Host-key verification can be cancelled immediately by Stop or by
+    // destroying the pane. The deadline prevents a pending prompt from
+    // retaining an SSH worker indefinitely.
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::minutes(3);
+    while (state->running.load() && verdict->load()==0 &&
+           std::chrono::steady_clock::now()<deadline)
         std::this_thread::sleep_for(std::chrono::milliseconds(25));
-    return running_.load() && verdict->load()==1;
+    return state->running.load() && verdict->load()==1;
 }
 
 void SshPane::connectNow(const QString& oneShotPassword) {
     if (accessGuard_ && !accessGuard_()) return;
-    if (running_.load()) return;
-    if (worker_.joinable()) worker_.join();
+    if (session_ && session_->running.load()) return;
     if (user_.trimmed().isEmpty()) {
         QMessageBox::warning(this,QStringLiteral("SSH"),QStringLiteral("SSH necesita un nombre de usuario."));
         return;
@@ -211,43 +286,84 @@ void SshPane::connectNow(const QString& oneShotPassword) {
     }
     QByteArray secret=password.toUtf8();
     password.fill(QChar('\0'));
-    running_.store(true);
+    terminal_->clearSession();
+    auto state=std::make_shared<SessionState>();
+    state->rows.store(terminal_->rows());
+    state->cols.store(terminal_->cols());
+    session_=state;
     connect_->setEnabled(false);
     disconnect_->setEnabled(true);
     status_->setText(QStringLiteral("SSH · iniciando conexión y verificación de identidad…"));
-    rows_.store(terminal_->rows());cols_.store(terminal_->cols());
-    worker_=std::thread([this,secret=std::move(secret)]() mutable {
-        runSession(std::move(secret));
-        running_.store(false);
-    });
+    const QPointer<SshPane> owner(this);
+    const QByteArray address=host_.toUtf8();
+    const QByteArray username=user_.toUtf8();
+    try {
+        // No thread can outlive its own SessionState or refer directly to the
+        // pane. Detached workers may complete after the UI tab is destroyed.
+        std::thread([state,owner,secret=std::move(secret),address,username,port=port_]() mutable {
+            runSession(state,owner,std::move(secret),address,username,port);
+        }).detach();
+    } catch (const std::system_error&) {
+        state->running.store(false);
+        state->cancelled.store(true);
+        session_.reset();
+        connect_->setEnabled(true);
+        disconnect_->setEnabled(false);
+        status_->setText(QStringLiteral("SSH · no se pudo crear el hilo de conexión"));
+    }
 }
 
 void SshPane::disconnectNow() {
-    running_.store(false);
-    const int fd=sock_.load();
-    if (fd>=0) ::shutdown(fd,SHUT_RDWR);
-    if (worker_.joinable()) worker_.join();
-    {std::lock_guard<std::mutex> lock(outputLock_);outbound_.clear();}
-    sock_.store(-1);
+    auto state=session_;
+    if (state) {
+        state->cancelled.store(true);
+        state->authenticated.store(false);
+        state->running.store(false);
+        // shutdown() wakes poll/libssh2 on the worker without closing its fd
+        // behind its back. Only the worker owns the actual close().
+        {
+            std::lock_guard<std::mutex> lock(state->socketLock);
+            if (state->socketFd>=0) ::shutdown(state->socketFd,SHUT_RDWR);
+        }
+        {
+            std::lock_guard<std::mutex> lock(state->outputLock);
+            state->outbound.clear();
+        }
+    }
     if (status_) status_->setText(QStringLiteral("SSH · desconectado"));
     if (connect_) connect_->setEnabled(true);
     if (disconnect_) disconnect_->setEnabled(false);
+    // Deliberately no join(): DNS and libssh2 teardown never block Qt.
 }
 
-void SshPane::runSession(QByteArray password) {
-    const QByteArray address=host_.toUtf8();
-    const QByteArray user=user_.toUtf8();
+void SshPane::runSession(SessionPtr state, QPointer<SshPane> owner,
+                         QByteArray password, QByteArray address,
+                         QByteArray user, int port) {
     auto clearSecret=[&password](){password.fill('\0');password.clear();};
+    auto finish=[&](const QString& status) {
+        clearSecret();
+        state->authenticated.store(false);
+        state->running.store(false);
+        postStatus(state,owner,status);
+    };
     static std::once_flag initialized;
     static int initResult=-1;
     std::call_once(initialized,[](){initResult=libssh2_init(0);});
-    if (initResult!=0) {clearSecret();postStatus(QStringLiteral("SSH · no se pudo inicializar libssh2"));return;}
-    const int fd=connectSocket(address,port_,running_);
-    if (fd<0 || !running_.load()) {
-        if (fd>=0) ::close(fd);
-        clearSecret();postStatus(QStringLiteral("SSH · conexión TCP no disponible"));return;
+    if (initResult!=0) {
+        finish(QStringLiteral("SSH · no se pudo inicializar libssh2"));
+        return;
     }
-    sock_.store(fd);
+    const int fd=connectSocket(address,port,state->running);
+    if (fd<0 || !state->running.load()) {
+        if (fd>=0) ::close(fd);
+        finish(QStringLiteral("SSH · conexión TCP no disponible"));
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(state->socketLock);
+        state->socketFd=fd;
+        if (!state->running.load()) ::shutdown(fd,SHUT_RDWR);
+    }
     LIBSSH2_SESSION* session=libssh2_session_init();
     LIBSSH2_CHANNEL* channel=nullptr;
     QString finalStatus=QStringLiteral("SSH · desconectado");
@@ -255,7 +371,7 @@ void SshPane::runSession(QByteArray password) {
     else {
         libssh2_session_set_blocking(session,0);
         do {
-            if (!retryUntil([&](){return libssh2_session_handshake(session,fd);},running_,fd)) {
+            if (!retryUntil([&](){return libssh2_session_handshake(session,fd);},state->running,fd)) {
                 finalStatus=QStringLiteral("SSH · error de negociación/cifrado");break;
             }
             size_t keyLen=0;int keyType=0;
@@ -265,18 +381,18 @@ void SshPane::runSession(QByteArray password) {
             }
             const auto hash=QCryptographicHash::hash(QByteArray(key,static_cast<qsizetype>(keyLen)),QCryptographicHash::Sha256);
             const QString fp=QStringLiteral("SHA256:")+QString::fromLatin1(hash.toBase64(QByteArray::OmitTrailingEquals));
-            if (!reviewHostKey(fp)) {
+            if (!reviewHostKey(state,owner,QString::fromUtf8(address),port,fp)) {
                 finalStatus=QStringLiteral("SSH · identidad del servidor no autorizada");break;
             }
             // No password is sent until the user confirms or an existing fingerprint matches.
             if (!retryUntil([&](){return libssh2_userauth_password_ex(session,user.constData(),
                     static_cast<unsigned int>(user.size()),password.constData(),
-                    static_cast<unsigned int>(password.size()),nullptr);},running_,fd)) {
+                    static_cast<unsigned int>(password.size()),nullptr);},state->running,fd)) {
                 finalStatus=QStringLiteral("SSH · autenticación rechazada");break;
             }
             clearSecret();
             const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(12);
-            while (running_.load() && std::chrono::steady_clock::now()<deadline && !channel) {
+            while (state->running.load() && std::chrono::steady_clock::now()<deadline && !channel) {
                 channel=libssh2_channel_open_session(session);
                 if (!channel) {
                     if (libssh2_session_last_errno(session)!=LIBSSH2_ERROR_EAGAIN) break;
@@ -285,25 +401,26 @@ void SshPane::runSession(QByteArray password) {
             }
             if (!channel) {finalStatus=QStringLiteral("SSH · canal no disponible");break;}
             if (!retryUntil([&](){return libssh2_channel_request_pty_ex(channel,"xterm-256color",14,
-                      nullptr,0,cols_.load(),rows_.load(),0,0);},running_,fd)) {
+                      nullptr,0,state->cols.load(),state->rows.load(),0,0);},state->running,fd)) {
                 finalStatus=QStringLiteral("SSH · servidor rechazó PTY");break;
             }
-            if (!retryUntil([&](){return libssh2_channel_shell(channel);},running_,fd)) {
+            if (!retryUntil([&](){return libssh2_channel_shell(channel);},state->running,fd)) {
                 finalStatus=QStringLiteral("SSH · servidor rechazó shell interactiva");break;
             }
-            postStatus(QStringLiteral("SSH · conectado a %1:%2").arg(host_).arg(port_));
+            state->authenticated.store(true);
+            postStatus(state,owner,QStringLiteral("SSH · conectado a %1:%2").arg(QString::fromUtf8(address)).arg(port));
             QByteArray pending;
-            int lastRows=rows_.load(),lastCols=cols_.load();
-            while(running_.load() && !libssh2_channel_eof(channel)) {
-                if (lastRows!=rows_.load() || lastCols!=cols_.load()) {
-                    const int r=rows_.load(),c=cols_.load();
+            int lastRows=state->rows.load(),lastCols=state->cols.load();
+            while(state->running.load() && !libssh2_channel_eof(channel)) {
+                if (lastRows!=state->rows.load() || lastCols!=state->cols.load()) {
+                    const int r=state->rows.load(),c=state->cols.load();
                     const int rc=libssh2_channel_request_pty_size(channel,c,r);
                     if (rc==0) {lastRows=r;lastCols=c;}
                     else if (rc!=LIBSSH2_ERROR_EAGAIN) break;
                 }
                 if (pending.isEmpty()) {
-                    std::lock_guard<std::mutex> lock(outputLock_);
-                    if (!outbound_.empty()) {pending=std::move(outbound_.front());outbound_.pop_front();}
+                    std::lock_guard<std::mutex> lock(state->outputLock);
+                    if (!state->outbound.empty()) {pending=std::move(state->outbound.front());state->outbound.pop_front();}
                 }
                 if (!pending.isEmpty()) {
                     const auto wr=libssh2_channel_write(channel,pending.constData(),static_cast<size_t>(pending.size()));
@@ -312,24 +429,43 @@ void SshPane::runSession(QByteArray password) {
                 }
                 char buffer[8192];
                 bool received=false;
+                bool fatalRead=false;
                 for(int i=0;i<16;++i) {
                     const auto rd=libssh2_channel_read(channel,buffer,sizeof(buffer));
-                    if (rd>0) {postBytes(QByteArray(buffer,static_cast<qsizetype>(rd)));received=true;}
-                    else {if (rd<0 && rd!=LIBSSH2_ERROR_EAGAIN) finalStatus=QStringLiteral("SSH · error de lectura");break;}
+                    if (rd>0) {postBytes(state,owner,QByteArray(buffer,static_cast<qsizetype>(rd)));received=true;}
+                    else {
+                        if (rd<0 && rd!=LIBSSH2_ERROR_EAGAIN) {
+                            finalStatus=QStringLiteral("SSH · conexión perdida / error de lectura");
+                            fatalRead=true;
+                        }
+                        break;
+                    }
                 }
+                if (fatalRead) break;
                 if (!received) {
-                    struct pollfd wait{fd,POLLIN|POLLOUT,0};::poll(&wait,1,30);
+                    struct pollfd wait{fd,POLLIN|POLLOUT,0};
+                    const int ready=::poll(&wait,1,30);
+                    if (ready>0 && (wait.revents & (POLLERR|POLLHUP|POLLNVAL))) {
+                        finalStatus=QStringLiteral("SSH · conexión remota cerrada");
+                        break;
+                    }
+                    if (ready<0 && errno!=EINTR) {
+                        finalStatus=QStringLiteral("SSH · error de transporte");
+                        break;
+                    }
                 }
             }
         } while(false);
         clearSecret();
-        // Shutdown the socket first: no unbounded blocking on a remote host.
+        // Stop the socket before libssh2 cleanup; the GUI never waits for it.
         ::shutdown(fd,SHUT_RDWR);
         if (channel) libssh2_channel_free(channel);
         libssh2_session_free(session);
     }
-    clearSecret();
-    sock_.store(-1);
-    ::close(fd);
-    postStatus(finalStatus);
+    {
+        std::lock_guard<std::mutex> lock(state->socketLock);
+        state->socketFd=-1;
+        ::close(fd);
+    }
+    finish(finalStatus);
 }

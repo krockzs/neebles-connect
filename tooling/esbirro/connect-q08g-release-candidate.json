@@ -1,0 +1,47 @@
+{
+  "elf_physical_gate": "Q08E_R4R2_PHYSICAL_ELF_PASS_PENDING_RUNTIMELEASE",
+  "installed": false,
+  "libvncclient": {
+    "deb_filename": "libvncclient1_0.9.15+dfsg-1+deb13u2+neebles1_amd64.deb",
+    "deb_sha256": "57572d40da915b9e648c33f8c386f647176a146a06b633ba7a2893ce6306c9da",
+    "integrity_manifest": "runtime/manifests/modules/neebles-connect.manifest.json",
+    "package": "libvncclient1"
+  },
+  "module": "neebles-connect",
+  "published": false,
+  "qt": {
+    "path": "bin/neebles-connect-desktop",
+    "sha256": "416ecbce17ecb2bf7db438c93912b4cbe6be950d3a850cbc22323369fdb3ac42"
+  },
+  "qt_compiled_sources_sha256": {
+    "docs/CONNECT_Q07_RESILIENCIA_PENDIENTE.md": "51510a5e39e008bac0884c461214cd8e3b26edf895f4ceffe38531009d4b00a5",
+    "manifest.json": "2c282d5bc30b0ff32973805776fe887dcaf59e086d35d270c4c8060bf586e008",
+    "ui/desktop/CMakeLists.txt": "ee4729ee63a103f375f4fb497390e2d0fc19d61cd01a212e1463e54750ba09c4",
+    "ui/desktop/ConnectStructures.cpp": "0e6aebb49524ed607f116cb15f63e7f9a5262c36fb137c405f1767eb6e84a001",
+    "ui/desktop/ConnectStructures.h": "56b446bdad35805b9c0d6b69dda7a5a4a5e549cac4e36f195e2d5de002470c7f",
+    "ui/desktop/MainWindow.cpp": "7274b34c407879d4d39a22320fd3e3d48f26f923738c1890c584c4eae793b281",
+    "ui/desktop/MainWindow.h": "0b0479e969c802250fd3509997ffc4f8ef04041adb4cb94539b7d79af13e064a",
+    "ui/desktop/SshPane.cpp": "4ece7445a79da95efe9815f5bfc37b08aafb32882a1811db74161d54398db083",
+    "ui/desktop/SshPane.h": "2de7d024dd7809483d2d07074b58dd66c80bdc6a591d030ffecb39a8749d5de8",
+    "ui/desktop/SshTerminal.cpp": "4b2073554bc6bead22e8af6d0458f90deddd872f5d533b099d28677bb61c8e05",
+    "ui/desktop/SshTerminal.h": "e561e4762b252f4d1ac4234d102b9ae300f8ab51858c505208e437bfb39cb7ea",
+    "ui/desktop/VncPane.cpp": "48dc4892de6174c6d20e3dbcd225707dd27322f394fde5c56b5bdcc4646d14d7",
+    "ui/desktop/VncPane.h": "6da6fd6fd581bb43a6746471884349c540ce08aebc70f88ba52e66367151e209",
+    "ui/desktop/main.cpp": "44476eaf6f24075e5125501fb94cc2a2d21d1c765acdb78de01043b737d27977"
+  },
+  "required_next_gates": [
+    "git review and publication of Connect and CUSTOM V2",
+    "Boss RuntimeLease/materialization real acceptance",
+    "SSH/VNC/Secrets functional smoke tests"
+  ],
+  "runtimelease_accepted": false,
+  "rust": {
+    "path": "runtime/neebles-connect",
+    "sha256": "b9154c0690bd581917a0457a671aafc43a3561c173d906b9f4e10c6e4eb24405",
+    "source_sha256": "a248d43d3308235062dfbea5ff8f866603cd0520bae243704468545b297aa83b"
+  },
+  "rust_qa_gate": "Q08F_RUST_QA_PASS_PENDING_RUNTIMELEASE",
+  "schema": 1,
+  "state": "RELEASE_CANDIDATE_NOT_CERTIFIED",
+  "version": "1.0.1"
+}

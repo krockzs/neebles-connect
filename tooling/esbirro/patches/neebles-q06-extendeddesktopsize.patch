@@ -1,0 +1,74 @@
+--- a/include/rfb/rfbclient.h
++++ b/include/rfb/rfbclient.h
+@@ -169,6 +169,12 @@
+ #define rfbX509CrlVerifyAll    2    /* All certificates in the server chain are checked */
+ 
+ struct _rfbClient;
++#define NEEBLES_RFB_TOPOLOGY_V1 1
++/* Layout descriptors are converted to host byte order; copy during callback. */
++typedef void (*rfbNeeblesScreenLayoutProc)(struct _rfbClient* client,
++    unsigned int reason, unsigned int result, int fbWidth, int fbHeight,
++    unsigned int count, const rfbExtDesktopScreen* screens);
++extern int rfbNeeblesTopologyApiVersion(void);
+ 
+ /**
+  * Handles a text chat message. If your application should accept text messages
+@@ -490,6 +496,8 @@
+ 
+         /* flag to indicate wheter updateRect is managed by lib or user */
+         rfbBool isUpdateRectManagedByLib;
++        /* Appended to retain all existing field offsets. Requires v1 patched library. */
++        rfbNeeblesScreenLayoutProc GotNeeblesScreenLayout;
+ } rfbClient;
+ 
+ /* cursor.c */
+--- a/src/libvncclient/rfbclient.c
++++ b/src/libvncclient/rfbclient.c
+@@ -99,6 +99,9 @@
+ rfbClientLogProc rfbClientErr=rfbDefaultClientLog;
+ 
+ /* extensions */
++
++/* Marker linked by Q06 Connect; stock Debian libvncclient must fail to link. */
++int rfbNeeblesTopologyApiVersion(void) { return 1; }
+ 
+ rfbClientProtocolExtension* rfbClientExtensions = NULL;
+ 
+@@ -2156,6 +2159,11 @@
+           return FALSE;
+         }
+ 
++        /* Preserve every screen instead of overwriting client->screen.
++         * Maximum RFB wire count is uint8_t (255). Never send SetDesktopSize.
++         * Keep legacy screen assignment for existing libvncclient consumers.
++         */
++        rfbExtDesktopScreen layouts[255];
+         screens = eds.numberOfScreens;
+         for (loop=0; loop < screens; loop++)
+         {
+@@ -2167,6 +2175,12 @@
+           } else {
+             invalidScreen = TRUE;
+           }
++          layouts[loop].id = rfbClientSwap32IfLE(screen.id);
++          layouts[loop].x = rfbClientSwap16IfLE(screen.x);
++          layouts[loop].y = rfbClientSwap16IfLE(screen.y);
++          layouts[loop].width = rfbClientSwap16IfLE(screen.width);
++          layouts[loop].height = rfbClientSwap16IfLE(screen.height);
++          layouts[loop].flags = rfbClientSwap32IfLE(screen.flags);
+         }
+ 
+         if (!invalidScreen && (client->width != rect.r.w || client->height != rect.r.h)) {
+@@ -2176,6 +2190,12 @@
+           rfbClientLog("Updated desktop size: %dx%d\n", rect.r.w, rect.r.h);
+         }
+         client->requestedResize = FALSE;
++        if (client->GotNeeblesScreenLayout) {
++          client->GotNeeblesScreenLayout(client, rect.r.x, rect.r.y,
++                                        client->width, client->height,
++                                        invalidScreen ? 0U : (unsigned int)screens,
++                                        invalidScreen ? NULL : layouts);
++        }
+ 
+         continue;
+       }

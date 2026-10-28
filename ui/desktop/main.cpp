@@ -11,11 +11,29 @@
 #include <QJsonObject>
 #include <QPixmap>
 #include <QScreen>
+#include <QSocketNotifier>
 #include <QSplashScreen>
 #include <QTimer>
 #include <cstdio>
+#include <csignal>
+#include <cerrno>
+#include <fcntl.h>
+#include <unistd.h>
 
 namespace {
+// SIGTERM comes from the Rust governor. Signal handlers may only write to
+// a nonblocking pipe; QWidget shutdown runs later on the Qt event loop.
+volatile sig_atomic_t g_shutdownWriteFd = -1;
+
+extern "C" void requestShutdownSignal(int) {
+    const int fd = static_cast<int>(g_shutdownWriteFd);
+    if (fd < 0) return;
+    const int previousErrno = errno;
+    const char byte = 1;
+    (void)::write(fd, &byte, 1); // async-signal-safe; pipe may already be full
+    errno = previousErrno;
+}
+
 QString moduleRoot() {
     // El binario se instala en <modulo>/bin/. El modulo se identifica
     // solo por contenido instalado, nunca por paths del checkout/laboratorio.
@@ -46,6 +64,32 @@ QString moduleVersion(const QString& root) {
 
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
+
+    // Handle Boss/SIGTERM on Qt's event loop, not inside a POSIX handler.
+    // A socket notifier wakes the application even during the splash screen.
+    int shutdownPipe[2] = {-1,-1};
+    if (::pipe2(shutdownPipe, O_CLOEXEC | O_NONBLOCK) != 0) {
+        std::fputs("NEEBLES Connect: no se pudo crear canal de cierre.\n", stderr);
+        return 3;
+    }
+    g_shutdownWriteFd = shutdownPipe[1];
+    struct sigaction shutdownAction {};
+    shutdownAction.sa_handler = requestShutdownSignal;
+    sigemptyset(&shutdownAction.sa_mask);
+    if (::sigaction(SIGTERM, &shutdownAction, nullptr) != 0 ||
+        ::sigaction(SIGINT, &shutdownAction, nullptr) != 0) {
+        std::fputs("NEEBLES Connect: no se pudo registrar cierre.\n", stderr);
+        g_shutdownWriteFd = -1;
+        ::close(shutdownPipe[0]);
+        ::close(shutdownPipe[1]);
+        return 3;
+    }
+    QSocketNotifier shutdownNotifier(shutdownPipe[0], QSocketNotifier::Read, &app);
+    QObject::connect(&shutdownNotifier, &QSocketNotifier::activated, &app, [&app, &shutdownNotifier]() {
+        shutdownNotifier.setEnabled(false);
+        QApplication::closeAllWindows();
+        app.quit();
+    });
     QApplication::setApplicationName(QStringLiteral("NEEBLES Connect"));
     QApplication::setOrganizationName(QStringLiteral("NEEBLES"));
     QApplication::setDesktopFileName(QStringLiteral("neebles-connect"));
@@ -87,5 +131,12 @@ int main(int argc, char** argv) {
         window->show();
         app.setQuitOnLastWindowClosed(true);
     });
-    return app.exec();
+    const int result = app.exec();
+    // No other handler may write to the pipe after these descriptors close.
+    ::signal(SIGTERM, SIG_DFL);
+    ::signal(SIGINT, SIG_DFL);
+    g_shutdownWriteFd = -1;
+    ::close(shutdownPipe[1]);
+    ::close(shutdownPipe[0]);
+    return result;
 }

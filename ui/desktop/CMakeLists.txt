@@ -27,6 +27,22 @@ foreach(_NEEDED
     endif()
 endforeach()
 
+# Connect Q06 requires the certified LibVNCClient with complete ExtendedDesktopSize API.
+# Never silently link the Debian stock .so with a modified client structure.
+include(CheckCXXSourceCompiles)
+set(CMAKE_REQUIRED_INCLUDES "${_INCLUDE}")
+set(CMAKE_REQUIRED_LIBRARIES "${_LIB}/libvncclient.so.1")
+check_cxx_source_compiles("#include <rfb/rfbclient.h>
+#ifndef NEEBLES_RFB_TOPOLOGY_V1
+#error missing certified Q06 header
+#endif
+int main() { return rfbNeeblesTopologyApiVersion() == 1 ? 0 : 1; }" NEEBLES_CONNECT_HAS_TOPOLOGY)
+if(NOT NEEBLES_CONNECT_HAS_TOPOLOGY)
+    message(FATAL_ERROR "Q06 requires certified LibVNCClient neebles topology API v1")
+endif()
+unset(CMAKE_REQUIRED_INCLUDES)
+unset(CMAKE_REQUIRED_LIBRARIES)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -50,6 +66,7 @@ set_target_properties(EsbirroVTerm PROPERTIES
 
 add_executable(neebles-connect-desktop
     main.cpp MainWindow.cpp MainWindow.h
+    ConnectStructures.cpp ConnectStructures.h
     VncPane.cpp VncPane.h
     SshPane.cpp SshPane.h
     SshTerminal.cpp SshTerminal.h)

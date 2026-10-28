@@ -24,12 +24,26 @@ class Connect101ContractTests(unittest.TestCase):
             self.assertNotIn('profiles.dev.json',read(f))
 
     def test_ipc_and_my_quick_independence(self):
-        code=read('ui/desktop/MainWindow.cpp')
-        for needle in ['secret.put','secret.get','secret.update','secret.delete','vault.list',
-                       'closeSavedSessions()', 'QStringLiteral("quick:")', 'refreshSecretsAccess()',
-                       'profiles_.clear()', 'setCredentialProvider']:
-            self.assertIn(needle,code)
-        self.assertIn('!tabs_->tabBar()->tabData(i).toString().startsWith(QStringLiteral("quick:"))',code)
+        # Q07D2: My Connect persists via Secrets' authenticated generic structures,
+        # not the legacy secret.get/put API. Quick sessions remain ephemeral.
+        code = read('ui/desktop/MainWindow.cpp')
+        store = read('ui/desktop/ConnectStructures.cpp')
+        for op in ('structure.schema_define', 'structure.get', 'structure.list',
+                   'structure.put', 'structure.delete'):
+            self.assertIn(f'StringLiteral("{op}")', store)
+        for needle in ('expected_revision', 'record.id', 'revision',
+                       'QStringLiteral("neebles-connect")'):
+            self.assertIn(needle, store)
+        for needle in ('closeSavedSessions()', 'QStringLiteral("quick:")',
+                       'refreshSecretsAccess()', 'profiles_.clear()',
+                       'QThreadPool::globalInstance()->start',
+                       'runStructure(', 'vaultEpoch_'):
+            self.assertIn(needle, code)
+        self.assertIn('!tabs_->tabBar()->tabData(i).toString().startsWith(QStringLiteral("quick:"))', code)
+        self.assertIn('if (!profile.id.startsWith(QStringLiteral("quick:"))) {', code)
+        self.assertIn('secret.fill(QChar(\'\\0\'))', code)
+        # The broker must not log raw secret-bearing requests or replies.
+        self.assertIn('Never copy sensitive requests or secret-bearing replies into logs', store)
 
     def test_controlled_qt_world(self):
         cmake=read('ui/desktop/CMakeLists.txt')
