@@ -1,4 +1,4 @@
-# N.E.E.B.L.E.S. Connect 1.0.1 — candidato Q08H/Q08I
+# N.E.E.B.L.E.S. Connect 1.0.2 — preparación de release Q09A
 
 Módulo integrado de acceso remoto en Qt 6.8.2 + Rust 1.98.1. Boss gobierna su instalación y ejecución mediante CUSTOM V2, Construction, las políticas de dependencias y RuntimeLease.
 
@@ -44,3 +44,11 @@ Un build exitoso **no equivale** a certificación. Para cualquier reconstrucció
 5. Probar de forma real Quick/My, Secrets lock/unlock, persistencia KDBX, SSH, VNC multimonitor y apagado limpio.
 
 No editar `/opt`, servicios, bóvedas ni inventarios a mano. No marcar como publicada ni certificada una versión solamente por compilar.
+
+## Nueva identidad de release 1.0.2 (Q09A)
+
+El material Q08D–Q08L y su trazabilidad pertenecen al histórico 1.0.1 que se publicó como candidato técnico. Q09A establece la identidad de release 1.0.2 sin modificar fuentes C++ ni el ejecutable Qt. Cargo se recompila para 1.0.2; la identidad Rust interna debe coincidir con el manifiesto. Las notas 1.0.2 están en `release/notes-v1.0.2.md` y `critical-update/release-notes/`.
+
+Las recetas `tooling/esbirro/build_connect_101.py` y la constancia `connect-q08g-release-candidate.json` se preservan como evidencia **histórica** del candidato Qt 1.0.1. No deben usarse como gate de certificación Rust 1.0.2. Q09A no declara que Connect esté instalado, publicado como 1.0.2 ni aceptado en RuntimeLease.
+
+La transición `update` declara ahora `ensure-secrets-vault` bajo la autoridad de Secrets: garantiza una bóveda existente, **no la elimina ni migra esquemas incompatibles**. Se acordó retirar una sola vez la anterior `vault-neebles-connect.kdbx`, de manera explícita y controlada con Connect y el acceso a Secrets detenidos; no afecta `vault-general.kdbx`, Master Key ni otras bóvedas. Después Secrets será responsable de crear la bóveda nueva y registrar los esquemas My Connect, VS Code y Dashboard.

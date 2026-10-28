@@ -1,4 +1,4 @@
-//! NEEBLES Connect 1.0.1: governed graphical Open session.
+//! NEEBLES Connect 1.0.2: governed graphical Open session.
 //! Does not install or uninstall anything; Boss owns transactions and authenticated peer credentials.
 use serde_json::{json, Value};
 use std::fs::{self, File};
@@ -111,7 +111,7 @@ fn module_root() -> Result<PathBuf, String> {
     )
     .map_err(|e| format!("manifest JSON: {e}"))?;
     if m.get("name").and_then(Value::as_str) != Some(MODULE)
-        || m.get("version").and_then(Value::as_str) != Some("1.0.1")
+        || m.get("version").and_then(Value::as_str) != Some(env!("CARGO_PKG_VERSION"))
         || m.get("entrypoint").and_then(Value::as_str) != Some("runtime/neebles-connect")
     {
         return Err("module identity/version/entrypoint mismatch".into());

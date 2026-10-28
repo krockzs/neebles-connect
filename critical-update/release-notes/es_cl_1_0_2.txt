@@ -1,0 +1,5 @@
+NEEBLES Connect 1.0.2
+
+Nueva versión con My Connect respaldado por estructuras cifradas de Secrets 1.0.7, credenciales por protocolo y perfiles VS Code replicables. Mejoras de VNC multimonitor, SSH, cargas asíncronas y cierre gobernado.
+
+Esta versión requiere una transición controlada de la bóveda exclusiva de Connect para utilizar los nuevos esquemas. No elimina automáticamente datos ni bóvedas: la operación se hará de forma explícita, sin alterar vault-general ni otras bóvedas. Las pruebas reales de RuntimeLease siguen pendientes.

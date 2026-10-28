@@ -1,0 +1,5 @@
+NEEBLES Connect 1.0.2
+
+My Connect now uses encrypted structured storage from Secrets 1.0.7, per-protocol credentials and repeatable VS Code profiles. Improvements include multi-monitor VNC, SSH, asynchronous state handling and governed shutdown.
+
+The Connect-only vault requires a controlled, explicit one-time reset to adopt the new schemas. This release does not automatically delete vaults or change vault-general or other modules' vaults. Actual RuntimeLease acceptance is still pending.
