@@ -215,16 +215,23 @@ def stage_q06_header(overlay:Path,candidate:Path)->None:
     )
 
 
+def release_version(connect:Path)->str:
+    """Read current module version from application metadata, not script code."""
+    manifest=json.loads((connect/'manifest.json').read_text(encoding='utf-8'))
+    cargo=tomllib.loads((connect/'runtime/Cargo.toml').read_text(encoding='utf-8'))
+    version=manifest.get('version')
+    if (manifest.get('name')!='neebles-connect' or not isinstance(version,str)
+        or re.fullmatch(r'[0-9]+(?:\\.[0-9]+){2}(?:[-+][0-9A-Za-z.-]+)?',version) is None
+        or cargo.get('package',{}).get('version')!=version):
+        raise RuntimeError('Connect manifest version and Cargo package version mismatch')
+    return version
+
+
 def audit(connect: Path, custom: Path) -> list[dict]:
     if not (connect / '.git').is_dir() or not (custom / '.git').is_dir():
         raise RuntimeError('Requires local Git repos Connect and CUSTOM')
 
-    manifest = json.loads(
-        (connect / 'manifest.json').read_text(encoding='utf-8')
-    )
-
-    if manifest.get('version') != '1.0.7':
-        raise RuntimeError('Connect release candidate must declare 1.0.7')
+    version=release_version(connect)
 
     # Fuente autenticada por commit + blobs Git, sin modificaciones locales.
     def git(*args: str, binary: bool = False):
@@ -234,22 +241,30 @@ def audit(connect: Path, custom: Path) -> list[dict]:
         )
         return result.stdout if binary else result.stdout.strip()
 
-    if git('status', '--porcelain', '--untracked-files=no'):
-        raise RuntimeError('Connect tiene cambios locales versionados')
+    if git('status', '--porcelain', '--untracked-files=all'):
+        raise RuntimeError('Connect Git tree must be clean (including untracked files)')
     source_commit = git('rev-parse', 'HEAD')
     if len(source_commit) != 40 or any(
         ch not in '0123456789abcdef' for ch in source_commit
     ):
         raise RuntimeError('Git HEAD invalido')
-    if len(SOURCE_FILES) != len(set(SOURCE_FILES)):
-        raise RuntimeError('Inventario de fuentes duplicado')
+    # Files are learned from Git HEAD; never add version-specific file lists.
+    global SOURCE_FILES
+    SOURCE_FILES=tuple(
+        name.decode('utf-8')
+        for name in git('ls-files','-z',binary=True).split(b'\\x00') if name
+    )
+    if (not SOURCE_FILES or len(SOURCE_FILES)!=len(set(SOURCE_FILES))
+        or 'tooling/esbirro/build_connect.py' not in SOURCE_FILES
+        or 'tooling/esbirro/connect-build-profile.json' not in SOURCE_FILES):
+        raise RuntimeError('Git tracked source inventory invalid')
     for rel in SOURCE_FILES:
         path = connect / rel
         if not path.is_file() or path.is_symlink():
-            raise RuntimeError('C64 source missing or symlink: ' + rel)
+            raise RuntimeError('Git source missing or symlink: ' + rel)
         blob = git('show', 'HEAD:' + rel, binary=True)
         if sha(path) != hashlib.sha256(blob).hexdigest():
-            raise RuntimeError('C64 source differs from Git blob: ' + rel)
+            raise RuntimeError('Source differs from Git blob: ' + rel)
 
     lifecycle = json.loads(
         (connect / 'lifecycle.json').read_text(encoding='utf-8')
@@ -262,21 +277,21 @@ def audit(connect: Path, custom: Path) -> list[dict]:
     if lifecycle['transitions']['open']['operations'][
         'launch-runtime']['munition']['step'] != 'open-runtime':
         raise RuntimeError('Lifecycle open contract altered')
-    print('OK Connect 1.0.7 Git source commit:', source_commit, flush=True)
+    print('OK Connect',version,'Git source commit:',source_commit,flush=True)
     print('OK Lifecycle protects Secrets during update', flush=True)
     changes=subprocess.run(
         ['git','-C',str(custom),'status','--porcelain','--untracked-files=no'],
         capture_output=True,text=True,check=True,timeout=60
     ).stdout.strip()
     if changes:
-        raise RuntimeError('CUSTOM V2 debe estar limpio para C64')
+        raise RuntimeError('CUSTOM V2 must be clean for controlled build')
     custom_commit=subprocess.run(
         ['git','-C',str(custom),'rev-parse','HEAD'],
         capture_output=True,text=True,check=True,timeout=60
     ).stdout.strip()
     print('CUSTOM V2 COMMIT',custom_commit,flush=True)
     tsv=custom/'runtime/manifests/modules/neebles-connect.packages.tsv'
-    expected_line='\t'.join(('libvncclient1','0.9.15+dfsg-1+deb13u2+neebles1',
+    expected_line='\t'.join(('libvncclient1',DEBS['libvncclient1'][0],
                               'amd64',Q08D_PKG_NAME,Q08D_DEB_SHA))
     lines=tsv.read_text(encoding='utf-8').splitlines()
     if lines.count(expected_line)!=1 or sum(x.startswith('libvncclient1\t') for x in lines)!=1:
@@ -304,19 +319,19 @@ def audit(connect: Path, custom: Path) -> list[dict]:
         check_deb(material,name,version,digest)
         items.append(dict(package=name,version=version,sha256=digest,path=str(material),role='runtime-existing'))
         print('OK ELF MATERIAL',name,soname,flush=True)
-    sysroot=custom/'build_sysroot_6.8.2'
+    sysroot=custom/PROFILE_SYSROOT
     needed={
         'Qt6':sysroot/'usr/lib/x86_64-linux-gnu/cmake/Qt6/Qt6Config.cmake',
-        'Qt6 Widgets':sysroot/'usr/lib/x86_64-linux-gnu/libQt6Widgets.so.6.8.2',
-        'GCC14':sysroot/'usr/bin/x86_64-linux-gnu-g++-14',
-        'GCC builtin':sysroot/'usr/lib/gcc/x86_64-linux-gnu/14/include',
-        'C++ std':sysroot/'usr/include/c++/14',
+        'Qt6 Widgets':sysroot/('usr/lib/x86_64-linux-gnu/libQt6Widgets.so.'+QT_VERSION),
+        'GCC':sysroot/('usr/bin/x86_64-linux-gnu-g++-'+str(GCC_MAJOR)),
+        'GCC builtin':sysroot/('usr/lib/gcc/x86_64-linux-gnu/'+str(GCC_MAJOR)+'/include'),
+        'C++ std':sysroot/('usr/include/c++/'+str(GCC_MAJOR)),
     }
     for label,path in needed.items():
         if not path.exists(): raise RuntimeError('Missing controlled sysroot '+label+': '+str(path))
         print('OK ESBIRRO',label,flush=True)
     for rel in SOURCE_FILES:
-        if not (connect/rel).is_file(): raise RuntimeError('Missing Connect Q08E source '+rel)
+        if not (connect/rel).is_file(): raise RuntimeError('Missing Git tracked source '+rel)
     return items
 
 def _merge_root(extracted:Path,dest:Path)->None:
@@ -538,7 +553,7 @@ def build(connect:Path,custom:Path,items:list[dict])->Path:
     log=candidate/'BUILD.log'
     print('CANDIDATE',candidate,flush=True)
     overlay=make_overlay(items,candidate)
-    sysroot=custom/'build_sysroot_6.8.2';b=candidate/'build'
+    sysroot=custom/PROFILE_SYSROOT;b=candidate/'build'
     env=os.environ.copy()
     for k in ('CXX','CC','CMAKE_PREFIX_PATH','CMAKE_MODULE_PATH','Qt6_DIR',
               'PKG_CONFIG_PATH','PKG_CONFIG_LIBDIR','PKG_CONFIG_SYSROOT_DIR',
