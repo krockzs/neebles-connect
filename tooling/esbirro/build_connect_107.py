@@ -93,9 +93,9 @@ PROXY_ELFS = {
 }
 
 # Sources from the actual Q07E incremental tree, reconstructed and re-hashed.
-# C64: identificar fuentes contra el commit Git seleccionado, no por
-# hashes incrustados de un build anterior.
-SOURCE_BRANCH = 'feature/connect-1.0.7-c63-vnc-fill-logo'
+# C68: fuente identificada por HEAD Git inmutable y hashes de blobs,
+# tanto en rama candidata como en main o checkout desacoplado.
+# No asociar la autoridad de compilacion a un nombre de rama.
 
 def sha(path: Path) -> str:
     h=hashlib.sha256()
@@ -198,8 +198,6 @@ def audit(connect: Path, custom: Path) -> list[dict]:
         )
         return result.stdout if binary else result.stdout.strip()
 
-    if git('branch', '--show-current') != SOURCE_BRANCH:
-        raise RuntimeError('C64 requiere rama candidata: ' + SOURCE_BRANCH)
     if git('status', '--porcelain', '--untracked-files=no'):
         raise RuntimeError('Connect tiene cambios locales versionados')
     source_commit = git('rev-parse', 'HEAD')
