@@ -1,7 +1,7 @@
 {
   "schema": 4,
   "name": "neebles-connect",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "entrypoint": "runtime/neebles-connect",
   "lifecycle": "lifecycle.json",
   "surfaces": "surfaces.json",
