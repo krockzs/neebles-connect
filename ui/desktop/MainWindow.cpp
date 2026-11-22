@@ -84,6 +84,8 @@ constexpr int kSunshine = 3;
 
 // Duración de avisos informativos breves.
 enum : int { kBriefNoticeMs = 3000 };
+// Dimensiones fijas de la marca para el sidebar expandido.
+enum : int { kSidebarBrandWidth = 217, kSidebarBrandHeight = 180 };
 
 QLabel* header(const QString& title, QWidget* parent) {
     auto* label = new QLabel(title, parent);
@@ -429,18 +431,19 @@ MainWindow::MainWindow(QString moduleRoot, QString version, QWidget* parent)
     auto* sideLayout = new QVBoxLayout(sidebar_);
     sidebarLayout_ = sideLayout;
     auto* topBar = new QHBoxLayout();
-    // Misma fotografía oficial que usa el splash; miniatura en cabecera.
+    // C63: marca ampliada al encabezado del sidebar expandido.
+    // El asset permanece intacto y el modo compacto oculta el logo.
     auto* brandLogo = new QLabel(sidebar_);
     brandLogo->setObjectName(QStringLiteral("sidebarBrandLogo"));
     brandLogo_ = brandLogo;
-    brandLogo->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    brandLogo->setAlignment(Qt::AlignCenter);
+    brandLogo->setFixedSize(kSidebarBrandWidth, kSidebarBrandHeight);
     QPixmap brandPhoto(QDir(moduleRoot_).filePath("assets/neebles-connect-logo.png"));
     if (brandPhoto.isNull())
         brandPhoto.load(QDir(moduleRoot_).filePath("assets/neebles-connect-icon.png"));
     if (!brandPhoto.isNull())
-        brandLogo->setPixmap(brandPhoto.scaled(QSize(125, 76), Qt::KeepAspectRatio,
-                                              Qt::SmoothTransformation));
-    brandLogo->setMinimumHeight(76);
+        brandLogo->setPixmap(brandPhoto.scaled(
+            brandLogo->size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
     topBar->addWidget(brandLogo, 1);
     sideLayout->addLayout(topBar);
     sideLayout->addSpacing(12);
