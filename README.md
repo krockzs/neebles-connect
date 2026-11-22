@@ -1,6 +1,8 @@
-# N.E.E.B.L.E.S. Connect 1.0.7 (candidato C64, NO publicado)
+# N.E.E.B.L.E.S. Connect 1.0.7 (candidato, NO publicado)
 
-**Alcance de 1.0.7:** VNC expande la imagen a la superficie disponible manteniendo transformación X/Y por monitor; el logo de la barra lateral expandida utiliza la cabecera completa. Ver `release/notes-v1.0.7.md`. Los ELF y la integración con Boss aún requieren certificación. La sección histórica que sigue no es el estado actual.
+**Constructor Esbirro permanente:** `tooling/esbirro/build_connect.py`, con perfil de materiales certificado `tooling/esbirro/connect-build-profile.json`. La versión de Connect se toma del manifiesto y de Cargo, nunca del nombre del script. Ver [guía de compilación](tooling/esbirro/README_BUILD_CONNECT.md). Las recetas `build_connect_10x.py` quedan como referencias históricas, no como entradas de futuras releases.
+
+**Alcance de 1.0.7:** VNC expande la imagen a la superficie disponible manteniendo transformación X/Y por monitor; el logo de la barra lateral expandida utiliza la cabecera completa. Ver `release/notes-v1.0.7.md`. C66 cerró el ELF Qt físico (89 objetos, cero faltantes) y C65 preparó el runtime Rust. La integración real con Boss RuntimeLease continúa pendiente; el nuevo constructor genérico aún requiere su validación independiente. La sección histórica que sigue no es el estado actual.
 
 ## Actualización 1.0.3 (en preparación)
 
