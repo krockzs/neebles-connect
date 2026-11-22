@@ -321,10 +321,10 @@ QRect VncScreen::remoteViewport() const {
 QRect VncScreen::fittedFrame() const {
     const QRect visible=remoteViewport();
     if (visible.isEmpty() || width()<=0 || height()<=0) return {};
-    QSize size=visible.size();
-    size.scale(this->size(),Qt::KeepAspectRatio);
-    if (size.isEmpty()) return {};
-    return QRect(QPoint((width()-size.width())/2,(height()-size.height())/2),size);
+    // C63: ocupar toda la superficie sin bandas laterales.
+    // remotePoint() usa escalas X/Y independientes y conserva
+    // el origen RFB cuando se selecciona un monitor.
+    return rect();
 }
 QPoint VncScreen::remotePoint(const QPointF& local) const {
     const QRect fitted=fittedFrame(), source=remoteViewport();
