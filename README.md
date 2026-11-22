@@ -1,4 +1,6 @@
-# N.E.E.B.L.E.S. Connect 1.0.6
+# N.E.E.B.L.E.S. Connect 1.0.7 (candidato C64, NO publicado)
+
+**Alcance de 1.0.7:** VNC expande la imagen a la superficie disponible manteniendo transformación X/Y por monitor; el logo de la barra lateral expandida utiliza la cabecera completa. Ver `release/notes-v1.0.7.md`. Los ELF y la integración con Boss aún requieren certificación. La sección histórica que sigue no es el estado actual.
 
 ## Actualización 1.0.3 (en preparación)
 
