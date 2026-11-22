@@ -72,7 +72,7 @@ class Connect102ContractTests(unittest.TestCase):
         self.assertIn("double(source.height())/double(fitted.height())", vnc)
         self.assertIn("source.x()+std::clamp", vnc)
         self.assertIn("source.y()+std::clamp", vnc)
-        self.assertIn("Qt::IgnoreAspectRatio", main)
+        self.assertIn("brandLogo->size(), Qt::KeepAspectRatio", main)
         self.assertIn("brandLogo->setFixedSize(kSidebarBrandWidth, kSidebarBrandHeight)", main)
         self.assertIn("brandLogo_->setVisible(!compact)", main)
         self.assertIn("status_->setVisible(!connected())", vnc)
