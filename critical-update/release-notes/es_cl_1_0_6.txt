@@ -1,0 +1,3 @@
+NEEBLES Connect 1.0.6
+Mejoras de copia SSH, aprovechamiento VNC, persistencia del orden de pestañas y separadores con colores completos en Dashboard.
+Conserva bóvedas y conexiones de Secrets.

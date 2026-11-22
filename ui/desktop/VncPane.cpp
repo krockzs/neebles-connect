@@ -513,6 +513,10 @@ void VncPane::updateUi(const QString& text) {
     connect_->setEnabled(!busy);
     disconnect_->setEnabled(busy);
     status_->setText(text);
+    // Durante una conexion el area remota recibe la altura
+    // anteriormente reservada al indicador inferior.
+    // Fit conserva proporcion y coordenadas de raton.
+    status_->setVisible(!connected());
 
 }
 void VncPane::connectNow(const QString& oneShotPassword) {

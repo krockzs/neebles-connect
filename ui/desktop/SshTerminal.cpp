@@ -163,6 +163,47 @@ bool SshTerminal::copySelectionToClipboard() const {
     return true;
 }
 
+bool SshTerminal::copyAllTextToClipboard() const {
+    if (!screen_) return false;
+
+    // El boton Copy exporta el texto disponible de la sesion,
+    // incluido el scrollback retenido en memoria.
+    // Ctrl+Shift+C conserva su semantica de copiar seleccion.
+    QStringList lines;
+    const int total = int(history_.size()) + rows_;
+
+    for (int row = 0; row < total; ++row) {
+        QString line;
+
+        for (int col = 0; col < cols_; ++col) {
+            VTermScreenCell cell{};
+            if (!cellAt(row, col, &cell)) continue;
+            if (cell.width == 0) continue;
+            line += cellText(cell);
+        }
+
+        while (line.endsWith(QChar(' ')))
+            line.chop(1);
+
+        lines.append(line);
+    }
+
+    while (!lines.isEmpty() && lines.first().isEmpty())
+        lines.removeFirst();
+
+    while (!lines.isEmpty() && lines.last().isEmpty())
+        lines.removeLast();
+
+    if (lines.isEmpty()) return false;
+
+    const QString output = lines.join(QChar('\n'));
+    if (output.trimmed().isEmpty()) return false;
+
+    QApplication::clipboard()->setText(
+        output, QClipboard::Clipboard);
+    return true;
+}
+
 bool SshTerminal::pasteClipboardText() {
     if (!send_) return false;
 

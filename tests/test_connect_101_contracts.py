@@ -11,7 +11,7 @@ def js(path): return json.loads(read(path))
 class Connect102ContractTests(unittest.TestCase):
     def test_manifest(self):
         m=js('manifest.json')
-        self.assertEqual((m['schema'],m['name'],m['version']), (4,'neebles-connect','1.0.5'))
+        self.assertEqual((m['schema'],m['name'],m['version']), (4,'neebles-connect','1.0.6'))
         self.assertEqual(m['entrypoint'],'runtime/neebles-connect')
 
     def test_install_vault_and_rootfs(self):
@@ -50,6 +50,25 @@ class Connect102ContractTests(unittest.TestCase):
         cmake=read('ui/desktop/CMakeLists.txt')
         for needle in ['Qt6 6.8.2 EXACT','NEEBLES_CONNECT_CONTROLLED_SYSROOT','NEEBLES_CONNECT_DEP_OVERLAY','libvncclient.so.1','libssh2.so.1','libvterm.so.0']:
             self.assertIn(needle,cmake)
+
+    def test_ui_persistence_and_copy(self):
+        main = read("ui/desktop/MainWindow.cpp")
+        pane = read("ui/desktop/SshPane.cpp")
+        terminal = read("ui/desktop/SshTerminal.cpp")
+        vnc = read("ui/desktop/VncPane.cpp")
+
+        self.assertIn('QStringLiteral("tab_order")', main)
+        self.assertIn("tabOrderSaveTimer_", main)
+        self.assertIn("loadTabOrder();", main)
+        self.assertNotIn("QSettings settings(", main)
+        self.assertIn("copyAllTextToClipboard()", pane)
+        self.assertIn(
+            "bool SshTerminal::copyAllTextToClipboard() const",
+            terminal)
+        self.assertIn("Qt::KeepAspectRatio", vnc)
+        self.assertIn("status_->setVisible(!connected())", vnc)
+        self.assertIn("QFrame::HLine", main)
+        self.assertIn("dashboardGroupHeader", main)
 
     def test_single_valid_qa(self):
         self.assertFalse((ROOT/'prototype').exists())

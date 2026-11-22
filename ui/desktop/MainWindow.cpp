@@ -39,7 +39,6 @@
 #include <QLocale>
 #include <QProcess>
 #include <QStandardPaths>
-#include <QSettings>
 #include <QStringList>
 #include <QtEndian>
 #include <QJsonArray>
@@ -516,6 +515,29 @@ MainWindow::MainWindow(QString moduleRoot, QString version, QWidget* parent)
     tabs_->tabBar()->setTabButton(0, QTabBar::LeftSide, nullptr);
     tabs_->tabBar()->setTabData(0, QStringLiteral("fixed:admin"));
     loadTabOrder();
+    tabOrderSaveTimer_ = new QTimer(this);
+    tabOrderSaveTimer_->setSingleShot(true);
+
+    QObject::connect(
+        tabOrderSaveTimer_, &QTimer::timeout,
+        this, [this]() {
+            if (!vaultReady_ || !dashboardLayoutLoaded_)
+                return;
+
+            // No competir con una escritura cifrada anterior.
+            if (structureInFlight_ || vaultLoading_) {
+                tabOrderSaveTimer_->start(450);
+                return;
+            }
+
+            if (!saveDashboardLayout()) {
+                statusBar()->showMessage(
+                    QStringLiteral(
+                        "No se pudo persistir el orden de pestañas"),
+                    6000);
+            }
+        });
+
     setCentralWidget(root);
     briefToast_ = new QLabel(root);
     briefToast_->setObjectName(QStringLiteral("neeblesBriefToast"));
@@ -1114,6 +1136,7 @@ bool MainWindow::applyVaultSnapshot(const QJsonObject& snapshot) {
     dashboardRows_ = std::move(layoutRows);
     dashboardCommittedRows_ = dashboardRows_;
     dashboardLayoutLoaded_ = true;
+    loadTabOrder();
     return true;
 }
 
@@ -1199,12 +1222,15 @@ static QJsonArray assignHostToGroup(
     }
 
     QString previousColor;
+    int previousTabOrder = -1;
     for (int i = rows.size() - 1; i >= 0; --i) {
         const QJsonObject row = rows.at(i).toObject();
         if (row.value(QStringLiteral("kind")).toString() ==
                 QStringLiteral("host") &&
             row.value(QStringLiteral("id")).toString() == id) {
             previousColor = row.value(QStringLiteral("color")).toString();
+            previousTabOrder = row.value(
+                QStringLiteral("tab_order")).toInt(-1);
             rows.removeAt(i);
         }
     }
@@ -1239,6 +1265,8 @@ static QJsonArray assignHostToGroup(
 
     if (!previousColor.isEmpty())
         entry.insert(QStringLiteral("color"),previousColor);
+    if (previousTabOrder >= 0)
+        entry.insert(QStringLiteral("tab_order"), previousTabOrder);
     rows.insert(pos, entry);
     return rows;
 }
@@ -2060,6 +2088,8 @@ bool MainWindow::saveDashboardLayout() {
         [this,rows](const QJsonObject& result) {
             if (!result.value(QStringLiteral("ok")).toBool()) {
                 dashboardRows_ = dashboardCommittedRows_;
+                loadTabOrder();
+                restoreTabOrder();
                 renderDashboard();
                 refreshSaved();
                 refreshEquipmentTabColors();
@@ -2335,8 +2365,20 @@ void MainWindow::renderDashboard() {
         dashboardList_->addStretch();
         return;
     }
+    auto addRule = [this](const QColor& color) {
+        auto* rule = new QFrame();
+        rule->setFrameShape(QFrame::HLine);
+        rule->setFrameShadow(QFrame::Plain);
+        rule->setLineWidth(1);
+        rule->setFixedHeight(1);
+        rule->setStyleSheet(
+            QStringLiteral("background-color: %1; border: none;")
+                .arg(color.name()));
+        dashboardList_->addWidget(rule);
+    };
+
     QSet<QString> present;
-    auto drawHost=[this,&present](const ConnectProfile& profile,int orderIndex) {
+    auto drawHost=[this,&present,&addRule](const ConnectProfile& profile,int orderIndex) {
         if(present.contains(profile.id))return;
         present.insert(profile.id);
         auto* row=new QWidget();
@@ -2409,28 +2451,105 @@ void MainWindow::renderDashboard() {
             QObject::connect(down,&QToolButton::clicked,this,[this,orderIndex](){moveDashboardRow(orderIndex,1);});
         }
         dashboardList_->addWidget(row);
+        addRule(QColor(QStringLiteral("#27272A")));
     };
-    auto addGroupLine=[this](const QString& title,const QString& color,int rowIndex){
-        auto* widget=new QWidget();
-        auto* h=new QHBoxLayout(widget);h->setContentsMargins(5,6,5,4);
-        auto* stripe=new QFrame(widget);
-        stripe->setFixedSize(5,22);
-        stripe->setStyleSheet(QStringLiteral("background-color: %1;").arg(color));
-        h->addWidget(stripe);
-        h->addWidget(new QLabel(title,widget),1);
-        if(rowIndex>=0) {
-            auto* rename=new QToolButton(widget);rename->setText(QStringLiteral("✎"));rename->setToolTip(QStringLiteral("Renombrar"));
-            auto* palette=new QToolButton(widget);palette->setText(QStringLiteral("◉"));palette->setToolTip(QStringLiteral("Cambiar color"));
-            auto* up=new QToolButton(widget);up->setText(QStringLiteral("↑"));up->setToolTip(QStringLiteral("Subir separador"));
-            auto* down=new QToolButton(widget);down->setText(QStringLiteral("↓"));down->setToolTip(QStringLiteral("Bajar separador"));
-            for(QToolButton* button:{rename,palette,up,down})h->addWidget(button);
-            QObject::connect(rename,&QToolButton::clicked,this,[this,rowIndex](){renameDashboardGroup(rowIndex);});
-            QObject::connect(palette,&QToolButton::clicked,this,[this,rowIndex](){setDashboardGroupColor(rowIndex);});
-            QObject::connect(up,&QToolButton::clicked,this,[this,rowIndex](){moveDashboardRow(rowIndex,-1);});
-            QObject::connect(down,&QToolButton::clicked,this,[this,rowIndex](){moveDashboardRow(rowIndex,1);});
+    auto addGroupLine=[this,&addRule](
+        const QString& title,
+        const QString& color,
+        int rowIndex
+    ) {
+        QColor accent(color);
+        if (!accent.isValid())
+            accent = QColor(QStringLiteral("#64748B"));
+
+        const auto linear = [](double c) {
+            return c <= 0.04045
+                ? c / 12.92
+                : std::pow((c + 0.055) / 1.055, 2.4);
+        };
+
+        const double luminance =
+            0.2126 * linear(accent.redF()) +
+            0.7152 * linear(accent.greenF()) +
+            0.0722 * linear(accent.blueF());
+
+        const QColor foreground =
+            luminance > 0.179 ? QColor(Qt::black)
+                              : QColor(Qt::white);
+
+        auto* widget = new QWidget();
+        widget->setObjectName(
+            QStringLiteral("dashboardGroupHeader"));
+
+        widget->setStyleSheet(
+            QStringLiteral(
+                "QWidget#dashboardGroupHeader {"
+                " background-color: %1;"
+                " border-radius: 4px;"
+                " }").arg(accent.name()));
+
+        auto* h = new QHBoxLayout(widget);
+        h->setContentsMargins(12, 8, 8, 8);
+        h->setSpacing(6);
+
+        auto* titleLabel = new QLabel(title, widget);
+        titleLabel->setStyleSheet(
+            QStringLiteral(
+                "background: transparent;"
+                "color: %1;"
+                "font-weight: 700;").arg(foreground.name()));
+        h->addWidget(titleLabel, 1);
+
+        if (rowIndex >= 0) {
+            auto* rename = new QToolButton(widget);
+            rename->setText(QStringLiteral("✎"));
+            rename->setToolTip(QStringLiteral("Renombrar"));
+
+            auto* palette = new QToolButton(widget);
+            palette->setText(QStringLiteral("◉"));
+            palette->setToolTip(QStringLiteral("Cambiar color"));
+
+            auto* up = new QToolButton(widget);
+            up->setText(QStringLiteral("↑"));
+            up->setToolTip(QStringLiteral("Subir separador"));
+
+            auto* down = new QToolButton(widget);
+            down->setText(QStringLiteral("↓"));
+            down->setToolTip(QStringLiteral("Bajar separador"));
+
+            for (QToolButton* button :
+                 {rename, palette, up, down})
+                h->addWidget(button);
+
+            QObject::connect(
+                rename, &QToolButton::clicked, this,
+                [this,rowIndex]() {
+                    renameDashboardGroup(rowIndex);
+                });
+
+            QObject::connect(
+                palette, &QToolButton::clicked, this,
+                [this,rowIndex]() {
+                    setDashboardGroupColor(rowIndex);
+                });
+
+            QObject::connect(
+                up, &QToolButton::clicked, this,
+                [this,rowIndex]() {
+                    moveDashboardRow(rowIndex, -1);
+                });
+
+            QObject::connect(
+                down, &QToolButton::clicked, this,
+                [this,rowIndex]() {
+                    moveDashboardRow(rowIndex, 1);
+                });
         }
+
         dashboardList_->addWidget(widget);
+        addRule(accent.darker(160));
     };
+
     // Identificar todos los grupos válidos primero.
     QSet<QString> validGroups;
 
@@ -2559,60 +2678,83 @@ bool MainWindow::isOpen(const QString& id) const {
 }
 
 void MainWindow::loadTabOrder() {
-    QSettings settings(
-        QSettings::IniFormat,
-        QSettings::UserScope,
-        QStringLiteral("NEEBLES"),
-        QStringLiteral("NEEBLES Connect"));
-
-    const QStringList stored = settings.value(
-        QStringLiteral("ui/my-connect-tab-order-v1")
-    ).toStringList();
-
+    // El orden se guarda como metadatos no sensibles en el
+    // documento cifrado de organizacion del Dashboard.
+    // No requiere HOME, QSettings ni nuevos grants.
     tabOrder_.clear();
 
+    QSet<QString> valid;
+    for (const ConnectProfile& profile : profiles_)
+        valid.insert(profile.id);
+
+    QVector<QPair<int, QString>> ranked;
     QSet<QString> seen;
 
-    // Limitar contenido leído desde configuración local.
-    if (stored.size() > 2048) return;
+    for (const QJsonValue& value : dashboardRows_) {
+        const QJsonObject row = value.toObject();
 
-    for (const QString& id : stored) {
-        if (id.isEmpty() || id.size() > 128 ||
-            id == QStringLiteral("fixed:admin") ||
-            id.startsWith(QStringLiteral("quick:")) ||
-            seen.contains(id)) {
+        if (row.value(QStringLiteral("kind")).toString()
+                != QStringLiteral("host"))
             continue;
-        }
+
+        const QString id =
+            row.value(QStringLiteral("id")).toString();
+
+        if (!valid.contains(id) || seen.contains(id))
+            continue;
+
+        const QJsonValue position =
+            row.value(QStringLiteral("tab_order"));
+
+        if (!position.isDouble())
+            continue;
+
+        const int number = position.toInt(-1);
+
+        if (number < 0 || number >= 2048)
+            continue;
 
         seen.insert(id);
-        tabOrder_.append(id);
+        ranked.append(qMakePair(number, id));
+    }
+
+    std::stable_sort(
+        ranked.begin(), ranked.end(),
+        [](const auto& a, const auto& b) {
+            return a.first < b.first;
+        });
+
+    for (const auto& item : ranked)
+        tabOrder_.append(item.second);
+
+    for (const ConnectProfile& profile : profiles_) {
+        if (!tabOrder_.contains(profile.id))
+            tabOrder_.append(profile.id);
     }
 }
 
 void MainWindow::persistTabOrder() {
-    if (!tabs_ || syncingTabs_ || !vaultReady_) return;
+    if (!tabs_ || syncingTabs_ || !vaultReady_
+        || !dashboardLayoutLoaded_)
+        return;
 
     QVector<QString> updated;
     QSet<QString> seen;
 
-    // Las pestañas Quick nunca forman parte del orden guardado.
     for (int i = 1; i < tabs_->count(); ++i) {
         const QString id =
             tabs_->tabBar()->tabData(i).toString();
 
-        if (id.isEmpty() || id.size() > 128 ||
-            id == QStringLiteral("fixed:admin") ||
-            id.startsWith(QStringLiteral("quick:")) ||
-            seen.contains(id)) {
+        if (id.isEmpty() || id.size() > 128
+            || id == QStringLiteral("fixed:admin")
+            || id.startsWith(QStringLiteral("quick:"))
+            || seen.contains(id))
             continue;
-        }
 
         updated.append(id);
         seen.insert(id);
     }
 
-    // Preservar referencias de equipos no visibles en este
-    // instante, sin sobrescribir su orden previamente guardado.
     for (const QString& id : tabOrder_) {
         if (!seen.contains(id) && updated.size() < 2048) {
             updated.append(id);
@@ -2620,31 +2762,43 @@ void MainWindow::persistTabOrder() {
         }
     }
 
-    if (updated == tabOrder_) return;
+    if (updated == tabOrder_)
+        return;
 
     tabOrder_ = updated;
+    QHash<QString, int> positions;
 
-    QStringList stored;
-    for (const QString& id : tabOrder_)
-        stored.append(id);
+    for (int i = 0; i < updated.size(); ++i)
+        positions.insert(updated.at(i), i);
 
-    QSettings settings(
-        QSettings::IniFormat,
-        QSettings::UserScope,
-        QStringLiteral("NEEBLES"),
-        QStringLiteral("NEEBLES Connect"));
+    bool modified = false;
 
-    settings.setValue(
-        QStringLiteral("ui/my-connect-tab-order-v1"),
-        stored);
-    settings.sync();
+    for (int i = 0; i < dashboardRows_.size(); ++i) {
+        QJsonObject row = dashboardRows_.at(i).toObject();
 
-    if (settings.status() != QSettings::NoError) {
-        statusBar()->showMessage(
-            QStringLiteral(
-                "No se pudo guardar el orden local de pestañas"),
-            6000);
+        if (row.value(QStringLiteral("kind")).toString()
+                != QStringLiteral("host"))
+            continue;
+
+        const QString id =
+            row.value(QStringLiteral("id")).toString();
+
+        if (!positions.contains(id))
+            continue;
+
+        const int rank = positions.value(id);
+
+        if (row.value(QStringLiteral("tab_order")).toInt(-1)
+                == rank)
+            continue;
+
+        row.insert(QStringLiteral("tab_order"), rank);
+        dashboardRows_.replace(i, row);
+        modified = true;
     }
+
+    if (modified && tabOrderSaveTimer_)
+        tabOrderSaveTimer_->start(450);
 }
 
 void MainWindow::restoreTabOrder() {
@@ -2866,7 +3020,7 @@ void MainWindow::refreshVisualState() {
             copyIconProtocol_ = protocol;
         }
         if (compact) copyTool_->setToolTip(protocol == kSsh ?
-            QStringLiteral("Copiar selección SSH (incluido scrollback)") :
+            QStringLiteral("Copiar toda la salida SSH (incluido scrollback)") :
             QStringLiteral("Copiar imagen del monitor VNC seleccionado"));
     }
     if (monitorTools_) {

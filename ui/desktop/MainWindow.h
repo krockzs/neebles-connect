@@ -117,6 +117,7 @@ private:
     QWidget* monitorTools_ = nullptr;
     QVBoxLayout* monitorLayout_ = nullptr;
     QVector<QString> tabOrder_;
+    QTimer* tabOrderSaveTimer_ = nullptr;
     QJsonArray dashboardRows_;
     QJsonArray dashboardCommittedRows_;
     QHash<QString,bool> dashboardStateSnapshot_;

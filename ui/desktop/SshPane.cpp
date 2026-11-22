@@ -193,7 +193,7 @@ SshPane::SshPane(QString host,int port,QString username,QWidget* parent)
 SshPane::~SshPane() { disconnectNow(); }
 
 bool SshPane::copySelectedText() const {
-    return terminal_ && connected() && terminal_->copySelectionToClipboard();
+    return terminal_ && connected() && terminal_->copyAllTextToClipboard();
 }
 
 void SshPane::postStatus(const SessionPtr& state, const QPointer<SshPane>& owner,

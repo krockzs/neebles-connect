@@ -1,4 +1,4 @@
-# N.E.E.B.L.E.S. Connect 1.0.5
+# N.E.E.B.L.E.S. Connect 1.0.6
 
 ## Actualización 1.0.3 (en preparación)
 

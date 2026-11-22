@@ -18,6 +18,7 @@ public:
     void receive(const QByteArray& bytes);
     void clearSession();
     bool copySelectionToClipboard() const;
+    bool copyAllTextToClipboard() const;
     int rows() const { return rows_; }
     int cols() const { return cols_; }
     void setSendHandler(std::function<void(QByteArray)> fn) { send_ = std::move(fn); }

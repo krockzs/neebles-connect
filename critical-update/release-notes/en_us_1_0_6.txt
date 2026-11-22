@@ -1,0 +1,3 @@
+NEEBLES Connect 1.0.6
+SSH copy, VNC viewport, persistent tab ordering and colored Dashboard group improvements.
+Existing Secrets vaults and saved connections are preserved.
