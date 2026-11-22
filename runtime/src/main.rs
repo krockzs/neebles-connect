@@ -1,4 +1,4 @@
-//! NEEBLES Connect 1.0.2: governed graphical Open session.
+//! NEEBLES Connect 1.0.4: governed graphical Open session.
 //! Does not install or uninstall anything; Boss owns transactions and authenticated peer credentials.
 use serde_json::{json, Value};
 use std::fs::{self, File};
