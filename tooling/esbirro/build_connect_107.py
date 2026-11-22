@@ -25,7 +25,7 @@ DEBS = {
   'libvterm0': ('0.3.3-3+b1','91886654a1d1e157e3a43c085048ffe23a255fe25211b2e7d781b38f69a1f911','runtime/modules/packages/libvterm0_0.3.3-3+b1_amd64.deb','runtime-candidate'),
 }
 
-SOURCE_FILES = ('ui/desktop/main.cpp', 'ui/desktop/MainWindow.cpp', 'ui/desktop/MainWindow.h', 'ui/desktop/VncPane.cpp', 'ui/desktop/VncPane.h', 'ui/desktop/SshPane.cpp', 'ui/desktop/SshPane.h', 'ui/desktop/SshTerminal.cpp', 'ui/desktop/SshTerminal.h', 'ui/desktop/CMakeLists.txt', 'ui/desktop/ConnectStructures.cpp', 'ui/desktop/ConnectStructures.h', 'runtime/src/main.rs', 'docs/CONNECT_Q07_RESILIENCIA_PENDIENTE.md', 'manifest.json', 'ui/desktop/ConnectionActionUi.h', 'runtime/Cargo.toml', 'runtime/Cargo.lock', 'lifecycle.json', 'README.md', 'release/notes-v1.0.7.md', 'tests/test_connect_101_contracts.py', 'tooling/esbirro/build_connect_107.py')
+SOURCE_FILES = ('ui/desktop/main.cpp', 'ui/desktop/MainWindow.cpp', 'ui/desktop/MainWindow.h', 'ui/desktop/VncPane.cpp', 'ui/desktop/VncPane.h', 'ui/desktop/SshPane.cpp', 'ui/desktop/SshPane.h', 'ui/desktop/SshTerminal.cpp', 'ui/desktop/SshTerminal.h', 'ui/desktop/CMakeLists.txt', 'ui/desktop/ConnectStructures.cpp', 'ui/desktop/ConnectStructures.h', 'runtime/src/main.rs', 'docs/CONNECT_Q07_RESILIENCIA_PENDIENTE.md', 'manifest.json', 'ui/desktop/ConnectionActionUi.h', 'runtime/Cargo.toml', 'runtime/Cargo.lock', 'lifecycle.json', 'README.md', 'release/notes-v1.0.7.md', 'tests/test_connect_101_contracts.py', 'tests/test_connect_107_elf_runpath.py', 'tooling/esbirro/build_connect_107.py')
 SASL = ('libsasl2-dev','2.1.28+dfsg1-9','ffb10079c52733a6073f1e0f5df88f19ca8e89dd959edee725515b0075391851',
         'runtime/modules/packages/libsasl2-dev_2.1.28+dfsg1-9_amd64.deb')
 
