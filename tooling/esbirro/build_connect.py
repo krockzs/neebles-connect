@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""Connect 1.0.7: controlled Qt candidate from local Connect sources + hashed CUSTOM material.
+"""Build Qt candidates for any NEEBLES Connect release using certified Esbirro.
 
-No sudo, network, host Qt/pkg-config fallback, repository writes or Boss launch.
-`--build` writes only under ~/Downloads/NEEBLES_CONNECT_107_CANDIDATOS/.
-Compile/DESTDIR is only a candidate. Recursive ELF closure and RuntimeLease remain separate gates.
+The Connect version comes from manifest.json + Cargo.toml. The controlled
+toolchain and immutable CUSTOM DEB/Q06/ELF pins come from an external JSON
+profile. No branch or module release number is hard-coded in this engine.
+
+--preview validates; --build stages only under ~/Downloads.
+Neither mode installs Connect, launches Boss, or authorizes host Qt fallback.
+Recursive ELF inspection and real Boss RuntimeLease remain distinct gates.
 """
 from __future__ import annotations
 import argparse
@@ -12,31 +16,92 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
+import tomllib
 
-DEBS = {
-  'libvncserver-dev': ('0.9.15+dfsg-1+deb13u2','e7f41ea5630eebc9d66100aa63a185640d0120fab39b16cb63f892d7e301b43f','runtime/modules/packages/libvncserver-dev_0.9.15+dfsg-1+deb13u2_amd64.deb','build-only'),
-  'libvncclient1': ('0.9.15+dfsg-1+deb13u2+neebles1','57572d40da915b9e648c33f8c386f647176a146a06b633ba7a2893ce6306c9da','runtime/modules/packages/libvncclient1_0.9.15+dfsg-1+deb13u2+neebles1_amd64.deb','runtime-q08d-candidate'),
-  'libssh2-1-dev': ('1.11.1-1+deb13u2','d3267add3544b2ad8fc28b9f57c462e85448045a049725e97e4ba1e59922ea7b','portable/esbirro/materials/neebles-connect/libssh2-1-dev_1.11.1-1+deb13u2_amd64.deb','build-only'),
-  'libssh2-1t64': ('1.11.1-1+deb13u2','dbb1024c192d4d292b7cfa902b96076cfe81b56a5eed4fb28da36e8bf543e49a','runtime/modules/packages/libssh2-1t64_1.11.1-1+deb13u2_amd64.deb','runtime-existing'),
-  'libvterm-dev': ('0.3.3-3+b1','bc9345ef6a2e9ae9ec255588c79d563ab63dd0009b2a6b0a25a841f09e55facb','portable/esbirro/materials/neebles-connect/libvterm-dev_0.3.3-3+b1_amd64.deb','build-only'),
-  'libvterm0': ('0.3.3-3+b1','91886654a1d1e157e3a43c085048ffe23a255fe25211b2e7d781b38f69a1f911','runtime/modules/packages/libvterm0_0.3.3-3+b1_amd64.deb','runtime-candidate'),
-}
+PROFILE_FILE=Path(__file__).with_name('connect-build-profile.json')
+SOURCE_FILES:tuple[str,...]=()
 
-SOURCE_FILES = ('ui/desktop/main.cpp', 'ui/desktop/MainWindow.cpp', 'ui/desktop/MainWindow.h', 'ui/desktop/VncPane.cpp', 'ui/desktop/VncPane.h', 'ui/desktop/SshPane.cpp', 'ui/desktop/SshPane.h', 'ui/desktop/SshTerminal.cpp', 'ui/desktop/SshTerminal.h', 'ui/desktop/CMakeLists.txt', 'ui/desktop/ConnectStructures.cpp', 'ui/desktop/ConnectStructures.h', 'runtime/src/main.rs', 'docs/CONNECT_Q07_RESILIENCIA_PENDIENTE.md', 'manifest.json', 'ui/desktop/ConnectionActionUi.h', 'runtime/Cargo.toml', 'runtime/Cargo.lock', 'lifecycle.json', 'README.md', 'release/notes-v1.0.7.md', 'tests/test_connect_101_contracts.py', 'tests/test_connect_107_elf_runpath.py', 'tooling/esbirro/build_connect_107.py')
-SASL = ('libsasl2-dev','2.1.28+dfsg1-9','ffb10079c52733a6073f1e0f5df88f19ca8e89dd959edee725515b0075391851',
-        'runtime/modules/packages/libsasl2-dev_2.1.28+dfsg1-9_amd64.deb')
+def _rel(value:str)->str:
+    if (not isinstance(value,str) or not value or Path(value).is_absolute()
+        or '..' in Path(value).parts or '\\' in value):
+        raise RuntimeError('Invalid profile relative path: '+repr(value))
+    return Path(value).as_posix()
 
-# Actual runtime closures from the authenticated Connect CUSTOM V2 membership.
-# Never pull these libraries from /usr/lib of the host or a Downloads overlay.
-# Tuple: Debian name, exact Debian version, CUSTOM TSV SHA256, physical filename, ELF soname.
-VNC_LINK_CLOSURE = (
-    ('liblzo2-2', '2.10-3+b1', 'f3032201fe2928a87e13f05ce256ff3ac2a7860c7e594dc51ae6d7348a4466ce', 'liblzo2-2_2.10-3+b1_amd64.deb', 'liblzo2.so.2'),
-    ('libgcrypt20', '1.11.0-7+deb13u1', 'f0eb41f8cb40896e0822e9ab65611e8383c12b721c76c54764f744abb4a8c247', 'libgcrypt20_1.11.0-7+deb13u1_amd64.deb', 'libgcrypt.so.20'),
-    ('libgpg-error0', '1.51-4', '22b95570fd41c113ef6f5651563b4d748292844baab1278a46eb940c1dec2322', 'libgpg-error0_1.51-4_amd64.deb', 'libgpg-error.so.0'),
-)
+def _pin(value:str)->str:
+    if not isinstance(value,str) or re.fullmatch(r'[0-9a-f]{64}',value) is None:
+        raise RuntimeError('Invalid certified SHA256: '+repr(value))
+    return value
+
+def load_profile()->None:
+    """Load immutable dependency policy, independent of Connect release number."""
+    global DEBS,SASL,VNC_LINK_CLOSURE,QT_VERSION,GCC_MAJOR,PROFILE_SYSROOT
+    global Q08B_PATCH,Q08B_PATCH_SHA,Q08B_HEADER_SOURCE_SHA,Q08B_HEADER_PATCHED_SHA
+    global Q08D_DEB_SHA,Q08D_ELF_SHA,Q08D_PKG_NAME,Q08D_ORIGINAL_NAME,Q08D_ORIGINAL_SHA
+    global PROXY_PKG,PROXY_VERSION,PROXY_DEB,PROXY_DEB_SHA,PROXY_RUNPATH,PROXY_ELFS
+
+    if PROFILE_FILE.is_symlink() or not PROFILE_FILE.is_file():
+        raise RuntimeError('Missing controlled build profile')
+    profile=json.loads(PROFILE_FILE.read_text(encoding='utf-8'))
+    if profile.get('schema')!=1 or profile.get('module')!='neebles-connect':
+        raise RuntimeError('Invalid Esbirro profile schema/module')
+
+    toolchain=profile['toolchain']
+    QT_VERSION=toolchain['qt_version']
+    GCC_MAJOR=toolchain['gcc_major']
+    PROFILE_SYSROOT=_rel(toolchain['sysroot_relative'])
+    if (re.fullmatch(r'[0-9]+(?:\\.[0-9]+){2}',QT_VERSION) is None
+        or type(GCC_MAJOR) is not int or GCC_MAJOR < 10):
+        raise RuntimeError('Invalid certified Qt/GCC toolchain')
+
+    DEBS={}
+    for name,item in profile['packages'].items():
+        if re.fullmatch(r'[a-z0-9][a-z0-9+.-]*',name) is None:
+            raise RuntimeError('Invalid package name: '+name)
+        values=(item['version'],_pin(item['sha256']),_rel(item['path']),item['role'])
+        if values[3] not in ('build-only','runtime-existing','runtime-candidate'):
+            raise RuntimeError('Invalid package role: '+name)
+        if name!='libsasl2-dev':
+            DEBS[name]=values
+        else:
+            SASL=(name,values[0],values[1],values[2])
+    if 'libsasl2-dev' not in profile['packages'] or 'libvncclient1' not in DEBS:
+        raise RuntimeError('Incomplete certified package profile')
+
+    VNC_LINK_CLOSURE=tuple(
+        (p['name'],p['version'],_pin(p['sha256']),_rel(p['filename']),p['soname'])
+        for p in profile['closure']
+    )
+
+    q06=profile['q06']
+    Q08B_PATCH=Path(__file__).resolve().parents[2]/_rel(q06['patch_path'])
+    Q08B_PATCH_SHA=_pin(q06['patch_sha256'])
+    Q08B_HEADER_SOURCE_SHA=_pin(q06['header_original_sha256'])
+    Q08B_HEADER_PATCHED_SHA=_pin(q06['header_patched_sha256'])
+    Q08D_ELF_SHA=_pin(q06['vnc_client_elf_sha256'])
+    Q08D_ORIGINAL_NAME=_rel(q06['original_deb_filename'])
+    Q08D_ORIGINAL_SHA=_pin(q06['original_deb_sha256'])
+    Q08D_PKG_NAME=Path(DEBS['libvncclient1'][2]).name
+    Q08D_DEB_SHA=DEBS['libvncclient1'][1]
+
+    proxy=profile['authorized_runpath']
+    PROXY_PKG=proxy['package']
+    PROXY_VERSION=proxy['version']
+    PROXY_DEB=_rel(proxy['filename'])
+    PROXY_DEB_SHA=_pin(proxy['sha256'])
+    PROXY_RUNPATH=proxy['runpath']
+    if (not isinstance(PROXY_RUNPATH,str)
+        or not PROXY_RUNPATH.startswith('/usr/lib/')
+        or '..' in Path(PROXY_RUNPATH).parts or ':' in PROXY_RUNPATH):
+        raise RuntimeError('Invalid approved RUNPATH')
+    PROXY_ELFS={_rel(rel):_pin(digest)
+                for rel,digest in proxy['elf_sha256'].items()}
+    if len(PROXY_ELFS)<2:
+        raise RuntimeError('RUNPATH exception has insufficient ELF pins')
+
 
 def check_custom_membership(tsv: Path) -> None:
     """Fail closed unless the three pins exist *exactly once* in CUSTOM V2."""
@@ -67,35 +132,6 @@ NEED_OVERLAY = (
     'usr/lib/x86_64-linux-gnu/libgpg-error.so.0',
 )
 
-# Q08E reuses the proven Esbirro compiler, GCC flags and Qt 6.8.2 recipe.
-# It must not silently use the old Debian developer header with a new client ABI.
-Q08B_PATCH = Path(__file__).resolve().parent/'patches/neebles-q06-extendeddesktopsize.patch'
-Q08B_PATCH_SHA = 'd6785f5623d123cdbd88d8115fa3cab9ba9084a9fe6dcf62fb369891b7c34c50'
-Q08B_HEADER_SOURCE_SHA = '422e9afa2aff6a38beb4667ea9e1ae9be4e3c421af9ab163d70b5236302a04cd'
-Q08B_HEADER_PATCHED_SHA = 'aaa8c2cf639ad8bd8a61be1f7a109050a99b0a9546b6f5f093528d921b6d604c'
-Q08D_DEB_SHA = '57572d40da915b9e648c33f8c386f647176a146a06b633ba7a2893ce6306c9da'
-Q08D_ELF_SHA = 'dfd203cc5b291c5b61d34972102b5732a7d75108a754ae7f321c221034dbe925'
-Q08D_CUSTOM_HEAD = '612a9dfa96bd287417e80c6d7d72b48c0fe96249'
-Q08D_PKG_NAME = 'libvncclient1_0.9.15+dfsg-1+deb13u2+neebles1_amd64.deb'
-Q08D_ORIGINAL_NAME = 'libvncclient1_0.9.15+dfsg-1+deb13u2_amd64.deb'
-Q08D_ORIGINAL_SHA = '13395ab10fb0cffb79e453778b22a26c1faa356fed995a6f25628238a639797a'
-
-# C64E: material autenticado de CUSTOM V2, verificado fisicamente contra
-# libproxy1v5_0.5.9-1_amd64.deb. No se concede fallback al anfitrion.
-PROXY_DEB = 'libproxy1v5_0.5.9-1_amd64.deb'
-PROXY_DEB_SHA = '794a8526989464cb17f1dec9dab921f0e5afb82bcc665e938fac925be47698eb'
-PROXY_RUNPATH = '/usr/lib/x86_64-linux-gnu/libproxy'
-PROXY_ELFS = {
-    'usr/lib/x86_64-linux-gnu/libproxy.so.0.5.9':
-        '88a785edfa73af6727fcea089e008cbfbb253cd77c2532d7577e8f2c4cafc805',
-    'usr/lib/x86_64-linux-gnu/libproxy/libpxbackend-1.0.so':
-        'ca5c681cb332fb373975f2fff8e47ba65323783a3ae2c4f8aa4d152720f140fd',
-}
-
-# Sources from the actual Q07E incremental tree, reconstructed and re-hashed.
-# C68: fuente identificada por HEAD Git inmutable y hashes de blobs,
-# tanto en rama candidata como en main o checkout desacoplado.
-# No asociar la autoridad de compilacion a un nombre de rama.
 
 def sha(path: Path) -> str:
     h=hashlib.sha256()
