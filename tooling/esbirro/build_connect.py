@@ -383,13 +383,14 @@ def make_overlay(items:list[dict],candidate:Path)->Path:
 
 def flags(sysroot:Path)->str:
     s=sysroot.as_posix()
+    gcc=str(GCC_MAJOR)
     return ' '.join((
-        f'-B{s}/usr/libexec/gcc/x86_64-linux-gnu/14/',
-        f'-B{s}/usr/lib/gcc/x86_64-linux-gnu/14/',
+        f'-B{s}/usr/libexec/gcc/x86_64-linux-gnu/{gcc}/',
+        f'-B{s}/usr/lib/gcc/x86_64-linux-gnu/{gcc}/',
         f'-B{s}/usr/bin/', '-nostdinc','-nostdinc++',
-        f'-isystem {s}/usr/include/c++/14',
-        f'-isystem {s}/usr/include/x86_64-linux-gnu/c++/14',
-        f'-isystem {s}/usr/lib/gcc/x86_64-linux-gnu/14/include',
+        f'-isystem {s}/usr/include/c++/{gcc}',
+        f'-isystem {s}/usr/include/x86_64-linux-gnu/c++/{gcc}',
+        f'-isystem {s}/usr/lib/gcc/x86_64-linux-gnu/{gcc}/include',
         f'-isystem {s}/usr/include/x86_64-linux-gnu',
         f'-isystem {s}/usr/include',
     ))
@@ -406,7 +407,7 @@ def _run(cmd:list[str],log:Path,env:dict)->None:
 
 def _cache_guards(build:Path,sysroot:Path)->None:
     expected={
-      'CMAKE_CXX_COMPILER':str(sysroot/'usr/bin/x86_64-linux-gnu-g++-14'),
+      'CMAKE_CXX_COMPILER':str(sysroot/('usr/bin/x86_64-linux-gnu-g++-'+str(GCC_MAJOR))),
       'CMAKE_SYSROOT':str(sysroot),
       'CMAKE_FIND_ROOT_PATH':str(sysroot),
       'Qt6_DIR':str(sysroot/'usr/lib/x86_64-linux-gnu/cmake/Qt6'),
@@ -427,9 +428,9 @@ def _certify_proxy_material(sysroot:Path)->None:
     # SHA del DEB, membresia y manifiesto se verifican ANTES del recorrido.
     custom=sysroot.resolve(strict=True).parent
     package=custom/'runtime/modules/packages'/PROXY_DEB
-    check_deb(package,'libproxy1v5','0.5.9-1',PROXY_DEB_SHA)
+    check_deb(package,PROXY_PKG,PROXY_VERSION,PROXY_DEB_SHA)
     tsv=custom/'runtime/manifests/modules/neebles-connect.packages.tsv'
-    expected='\t'.join(('libproxy1v5','0.5.9-1','amd64',PROXY_DEB,PROXY_DEB_SHA))
+    expected='\t'.join((PROXY_PKG,PROXY_VERSION,'amd64',PROXY_DEB,PROXY_DEB_SHA))
     if tsv.read_text(encoding='utf-8').splitlines().count(expected)!=1:
         raise RuntimeError('CUSTOM V2 libproxy membership mismatch')
     manifest=json.loads((custom/'runtime/manifests/modules/neebles-connect.manifest.json').read_text(encoding='utf-8'))
@@ -476,7 +477,7 @@ def _needed(binary:Path,sysroot:Path|None=None)->tuple[list[str],list[Path]]:
         raise RuntimeError('RUNPATH ELF identity not certified: '+relative)
     # El RUNPATH absoluto es una ruta del mundo destino, JAMAS del host.
     # Solo proyectamos su ruta homologada dentro del sysroot autenticado.
-    return needed,[sysroot/'usr/lib/x86_64-linux-gnu/libproxy']
+    return needed,[sysroot/PROXY_RUNPATH.lstrip('/')]
 
 
 def _recursive_elf_audit(binary:Path,overlay:Path,sysroot:Path,candidate:Path)->dict:
@@ -545,7 +546,8 @@ def _elf_inventory(binary:Path,overlay:Path,sysroot:Path)->list[str]:
 def build(connect:Path,custom:Path,items:list[dict])->Path:
     for command in ('cmake','readelf','dpkg-deb'):
         if shutil.which(command) is None:raise RuntimeError('Missing utility '+command)
-    stage_base=Path.home()/'Downloads/NEEBLES_CONNECT_107_CANDIDATOS'
+    version=release_version(connect)
+    stage_base=Path.home()/'Downloads'/('NEEBLES_CONNECT_'+version.replace('.','').replace('-','_').replace('+','_')+'_CANDIDATOS')
     stage_base.mkdir(parents=True,exist_ok=True)
     candidate=stage_base/('candidate_'+datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
     candidate.mkdir(mode=0o700)
@@ -562,7 +564,7 @@ def build(connect:Path,custom:Path,items:list[dict])->Path:
         env.pop(k,None)
     env['PKG_CONFIG_LIBDIR']=str(candidate/'no-host-pkgconfig')
     Qt=sysroot/'usr/lib/x86_64-linux-gnu/cmake/Qt6'
-    compiler=sysroot/'usr/bin/x86_64-linux-gnu-g++-14'
+    compiler=sysroot/('usr/bin/x86_64-linux-gnu-g++-'+str(GCC_MAJOR))
     args=['cmake','-S',str(connect/'ui/desktop'),'-B',str(b),
         '-DCMAKE_BUILD_TYPE=Release',
         '-DCMAKE_INSTALL_PREFIX=/opt/neebles/modules/neebles-connect',
@@ -607,7 +609,9 @@ def build(connect:Path,custom:Path,items:list[dict])->Path:
             raise RuntimeError('Direct ELF DT_NEEDED unresolved: '+', '.join(unresolved))
         # Recursive physical ELF certification is a SEPARATE gate (Q08E-R4R2).
         # Do not confuse a successful compiler/install-stage with that gate.
-        result={'status':'CONNECT_107_QT_STAGED_PENDING_ELF_RUNTIME_QA',
+        result={'status':'CONNECT_QT_STAGED_PENDING_ELF_RUNTIME_QA',
+            'module':'neebles-connect','version':version,
+            'build_profile_sha256':sha(PROFILE_FILE),
             'binary_sha256':sha(binary),'binary':str(binary),'overlay':str(overlay),
             'root':str(root),'unresolved_direct_elf_needed':unresolved,
             'recursive_elf_status':'NOT_EXECUTED_SEPARATE_Q08E_R4R2_GATE',
@@ -632,14 +636,17 @@ def main()->int:
     p.add_argument('--custom',type=Path,default=Path.home()/'NEEBLES/neebles-custom')
     args=p.parse_args()
     try:
-        print('=== CONNECT 1.0.7 / ESBIRRO QT / NO INSTALADO ===',flush=True)
         connect=args.connect.expanduser().resolve();custom=args.custom.expanduser().resolve()
+        version=release_version(connect)
+        print('=== CONNECT',version,'/ ESBIRRO QT / NO INSTALADO ===',flush=True)
         items=audit(connect,custom)
-        print('PRECHECK OK: C64 sources + Q08D DEB + Q06 header + controlled Qt 6.8.2/GCC14',flush=True)
+        print('PRECHECK OK: Git HEAD + certified CUSTOM DEBs/Q06 + Qt',QT_VERSION,'GCC',GCC_MAJOR,flush=True)
         if args.preview:print('PREVIEW OK: no modifications, run --build next',flush=True)
         else:build(connect,custom,items)
         return 0
     except (RuntimeError,OSError,KeyError,ValueError,subprocess.SubprocessError) as e:
         print('BLOQUEADO:',e,file=sys.stderr,flush=True)
         return 2
+load_profile()
+
 if __name__=='__main__':sys.exit(main())
