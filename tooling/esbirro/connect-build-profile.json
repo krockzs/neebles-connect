@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "module": "neebles-connect",
+  "toolchain": {
+    "qt_version": "6.8.2",
+    "gcc_major": 14,
+    "sysroot_relative": "build_sysroot_6.8.2"
+  },
+  "packages": {
+    "libvncserver-dev": {
+      "version": "0.9.15+dfsg-1+deb13u2",
+      "sha256": "e7f41ea5630eebc9d66100aa63a185640d0120fab39b16cb63f892d7e301b43f",
+      "path": "runtime/modules/packages/libvncserver-dev_0.9.15+dfsg-1+deb13u2_amd64.deb",
+      "role": "build-only"
+    },
+    "libvncclient1": {
+      "version": "0.9.15+dfsg-1+deb13u2+neebles1",
+      "sha256": "57572d40da915b9e648c33f8c386f647176a146a06b633ba7a2893ce6306c9da",
+      "path": "runtime/modules/packages/libvncclient1_0.9.15+dfsg-1+deb13u2+neebles1_amd64.deb",
+      "role": "runtime-candidate"
+    },
+    "libssh2-1-dev": {
+      "version": "1.11.1-1+deb13u2",
+      "sha256": "d3267add3544b2ad8fc28b9f57c462e85448045a049725e97e4ba1e59922ea7b",
+      "path": "portable/esbirro/materials/neebles-connect/libssh2-1-dev_1.11.1-1+deb13u2_amd64.deb",
+      "role": "build-only"
+    },
+    "libssh2-1t64": {
+      "version": "1.11.1-1+deb13u2",
+      "sha256": "dbb1024c192d4d292b7cfa902b96076cfe81b56a5eed4fb28da36e8bf543e49a",
+      "path": "runtime/modules/packages/libssh2-1t64_1.11.1-1+deb13u2_amd64.deb",
+      "role": "runtime-existing"
+    },
+    "libvterm-dev": {
+      "version": "0.3.3-3+b1",
+      "sha256": "bc9345ef6a2e9ae9ec255588c79d563ab63dd0009b2a6b0a25a841f09e55facb",
+      "path": "portable/esbirro/materials/neebles-connect/libvterm-dev_0.3.3-3+b1_amd64.deb",
+      "role": "build-only"
+    },
+    "libvterm0": {
+      "version": "0.3.3-3+b1",
+      "sha256": "91886654a1d1e157e3a43c085048ffe23a255fe25211b2e7d781b38f69a1f911",
+      "path": "runtime/modules/packages/libvterm0_0.3.3-3+b1_amd64.deb",
+      "role": "runtime-candidate"
+    },
+    "libsasl2-dev": {
+      "version": "2.1.28+dfsg1-9",
+      "sha256": "ffb10079c52733a6073f1e0f5df88f19ca8e89dd959edee725515b0075391851",
+      "path": "runtime/modules/packages/libsasl2-dev_2.1.28+dfsg1-9_amd64.deb",
+      "role": "build-only"
+    }
+  },
+  "closure": [
+    {
+      "name": "liblzo2-2",
+      "version": "2.10-3+b1",
+      "sha256": "f3032201fe2928a87e13f05ce256ff3ac2a7860c7e594dc51ae6d7348a4466ce",
+      "filename": "liblzo2-2_2.10-3+b1_amd64.deb",
+      "soname": "liblzo2.so.2"
+    },
+    {
+      "name": "libgcrypt20",
+      "version": "1.11.0-7+deb13u1",
+      "sha256": "f0eb41f8cb40896e0822e9ab65611e8383c12b721c76c54764f744abb4a8c247",
+      "filename": "libgcrypt20_1.11.0-7+deb13u1_amd64.deb",
+      "soname": "libgcrypt.so.20"
+    },
+    {
+      "name": "libgpg-error0",
+      "version": "1.51-4",
+      "sha256": "22b95570fd41c113ef6f5651563b4d748292844baab1278a46eb940c1dec2322",
+      "filename": "libgpg-error0_1.51-4_amd64.deb",
+      "soname": "libgpg-error.so.0"
+    }
+  ],
+  "q06": {
+    "patch_path": "tooling/esbirro/patches/neebles-q06-extendeddesktopsize.patch",
+    "patch_sha256": "d6785f5623d123cdbd88d8115fa3cab9ba9084a9fe6dcf62fb369891b7c34c50",
+    "header_original_sha256": "422e9afa2aff6a38beb4667ea9e1ae9be4e3c421af9ab163d70b5236302a04cd",
+    "header_patched_sha256": "aaa8c2cf639ad8bd8a61be1f7a109050a99b0a9546b6f5f093528d921b6d604c",
+    "vnc_client_elf_sha256": "dfd203cc5b291c5b61d34972102b5732a7d75108a754ae7f321c221034dbe925",
+    "original_deb_filename": "libvncclient1_0.9.15+dfsg-1+deb13u2_amd64.deb",
+    "original_deb_sha256": "13395ab10fb0cffb79e453778b22a26c1faa356fed995a6f25628238a639797a"
+  },
+  "authorized_runpath": {
+    "package": "libproxy1v5",
+    "version": "0.5.9-1",
+    "filename": "libproxy1v5_0.5.9-1_amd64.deb",
+    "sha256": "794a8526989464cb17f1dec9dab921f0e5afb82bcc665e938fac925be47698eb",
+    "runpath": "/usr/lib/x86_64-linux-gnu/libproxy",
+    "elf_sha256": {
+      "usr/lib/x86_64-linux-gnu/libproxy.so.0.5.9": "88a785edfa73af6727fcea089e008cbfbb253cd77c2532d7577e8f2c4cafc805",
+      "usr/lib/x86_64-linux-gnu/libproxy/libpxbackend-1.0.so": "ca5c681cb332fb373975f2fff8e47ba65323783a3ae2c4f8aa4d152720f140fd"
+    }
+  }
+}
