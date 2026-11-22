@@ -443,7 +443,7 @@ MainWindow::MainWindow(QString moduleRoot, QString version, QWidget* parent)
         brandPhoto.load(QDir(moduleRoot_).filePath("assets/neebles-connect-icon.png"));
     if (!brandPhoto.isNull())
         brandLogo->setPixmap(brandPhoto.scaled(
-            brandLogo->size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+            brandLogo->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
     topBar->addWidget(brandLogo, 1);
     sideLayout->addLayout(topBar);
     sideLayout->addSpacing(12);
