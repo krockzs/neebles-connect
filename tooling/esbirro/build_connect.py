@@ -230,6 +230,13 @@ def release_version(connect:Path)->str:
 def audit(connect: Path, custom: Path) -> list[dict]:
     if not (connect / '.git').is_dir() or not (custom / '.git').is_dir():
         raise RuntimeError('Requires local Git repos Connect and CUSTOM')
+    # The engine AND profile must belong to the exact Git tree being audited.
+    if (Path(__file__).resolve() !=
+        (connect/'tooling/esbirro/build_connect.py').resolve(strict=True)):
+        raise RuntimeError('Builder does not belong to the selected Connect repo')
+    if (PROFILE_FILE.resolve(strict=True) !=
+        (connect/'tooling/esbirro/connect-build-profile.json').resolve(strict=True)):
+        raise RuntimeError('Build profile does not belong to the selected Connect repo')
 
     version=release_version(connect)
 
