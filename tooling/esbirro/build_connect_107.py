@@ -80,6 +80,18 @@ Q08D_PKG_NAME = 'libvncclient1_0.9.15+dfsg-1+deb13u2+neebles1_amd64.deb'
 Q08D_ORIGINAL_NAME = 'libvncclient1_0.9.15+dfsg-1+deb13u2_amd64.deb'
 Q08D_ORIGINAL_SHA = '13395ab10fb0cffb79e453778b22a26c1faa356fed995a6f25628238a639797a'
 
+# C64E: material autenticado de CUSTOM V2, verificado fisicamente contra
+# libproxy1v5_0.5.9-1_amd64.deb. No se concede fallback al anfitrion.
+PROXY_DEB = 'libproxy1v5_0.5.9-1_amd64.deb'
+PROXY_DEB_SHA = '794a8526989464cb17f1dec9dab921f0e5afb82bcc665e938fac925be47698eb'
+PROXY_RUNPATH = '/usr/lib/x86_64-linux-gnu/libproxy'
+PROXY_ELFS = {
+    'usr/lib/x86_64-linux-gnu/libproxy.so.0.5.9':
+        '88a785edfa73af6727fcea089e008cbfbb253cd77c2532d7577e8f2c4cafc805',
+    'usr/lib/x86_64-linux-gnu/libproxy/libpxbackend-1.0.so':
+        'ca5c681cb332fb373975f2fff8e47ba65323783a3ae2c4f8aa4d152720f140fd',
+}
+
 # Sources from the actual Q07E incremental tree, reconstructed and re-hashed.
 # C64: identificar fuentes contra el commit Git seleccionado, no por
 # hashes incrustados de un build anterior.
@@ -361,16 +373,67 @@ def _cache_guards(build:Path,sysroot:Path)->None:
         if seen.get(k)!=[v]:raise RuntimeError('CMake provenance invalid: '+k+' expected '+v+' seen '+repr(seen.get(k)))
         print('PROVENANCE OK',k,flush=True)
 
-def _needed(binary:Path)->list[str]:
+def _certify_proxy_material(sysroot:Path)->None:
+    # Solo se acepta el paquete libproxy1v5 ya declarado por CUSTOM V2.
+    # SHA del DEB, membresia y manifiesto se verifican ANTES del recorrido.
+    custom=sysroot.resolve(strict=True).parent
+    package=custom/'runtime/modules/packages'/PROXY_DEB
+    check_deb(package,'libproxy1v5','0.5.9-1',PROXY_DEB_SHA)
+    tsv=custom/'runtime/manifests/modules/neebles-connect.packages.tsv'
+    expected='\t'.join(('libproxy1v5','0.5.9-1','amd64',PROXY_DEB,PROXY_DEB_SHA))
+    if tsv.read_text(encoding='utf-8').splitlines().count(expected)!=1:
+        raise RuntimeError('CUSTOM V2 libproxy membership mismatch')
+    manifest=json.loads((custom/'runtime/manifests/modules/neebles-connect.manifest.json').read_text(encoding='utf-8'))
+    matches=[e for e in manifest.get('entries',[]) if e.get('path')=='packages/'+PROXY_DEB]
+    if (manifest.get('module')!='neebles-connect' or len(matches)!=1
+        or matches[0].get('sha256')!=PROXY_DEB_SHA
+        or matches[0].get('size')!=package.stat().st_size):
+        raise RuntimeError('CUSTOM V2 libproxy manifest mismatch')
+    for rel,digest in PROXY_ELFS.items():
+        physical=sysroot/rel
+        if not physical.is_file() or not physical.resolve(strict=True).is_relative_to(sysroot.resolve()):
+            raise RuntimeError('Missing or escaped Esbirro libproxy ELF: '+rel)
+        if sha(physical)!=digest:
+            raise RuntimeError('Esbirro libproxy ELF identity mismatch: '+rel)
+    print('C64E PROXY DEB/MANIFEST/ELF: exact authenticated identities OK',flush=True)
+
+
+def _needed(binary:Path,sysroot:Path|None=None)->tuple[list[str],list[Path]]:
     r=subprocess.run(['readelf','-d',str(binary)],check=True,capture_output=True,text=True)
     needed=[]
+    runpath=[]
     for line in r.stdout.splitlines():
-        if '(NEEDED)' in line and '[' in line:needed.append(line.split('[',1)[1].split(']',1)[0])
-        if '(RPATH)' in line or '(RUNPATH)' in line:raise RuntimeError('RPATH/RUNPATH not allowed in ELF')
-    return needed
+        if '(NEEDED)' in line:
+            if '[' not in line or ']' not in line:
+                raise RuntimeError('Malformed ELF NEEDED: '+str(binary))
+            needed.append(line.split('[',1)[1].split(']',1)[0])
+        if '(RPATH)' in line:
+            raise RuntimeError('DT_RPATH not authorized: '+str(binary))
+        if '(RUNPATH)' in line:
+            if '[' not in line or ']' not in line:
+                raise RuntimeError('Malformed ELF RUNPATH: '+str(binary))
+            runpath.append(line.split('[',1)[1].split(']',1)[0])
+    if not runpath:
+        return needed,[]
+    if sysroot is None or runpath!=[PROXY_RUNPATH]:
+        raise RuntimeError('Unapproved ELF RUNPATH: '+str(binary)+' '+repr(runpath))
+    real=binary.resolve(strict=True)
+    root=sysroot.resolve(strict=True)
+    if not real.is_relative_to(root):
+        raise RuntimeError('RUNPATH ELF escapes controlled sysroot: '+str(binary))
+    relative=real.relative_to(root).as_posix()
+    digest=PROXY_ELFS.get(relative)
+    if digest is None or sha(real)!=digest:
+        raise RuntimeError('RUNPATH ELF identity not certified: '+relative)
+    # El RUNPATH absoluto es una ruta del mundo destino, JAMAS del host.
+    # Solo proyectamos su ruta homologada dentro del sysroot autenticado.
+    return needed,[sysroot/'usr/lib/x86_64-linux-gnu/libproxy']
+
 
 def _recursive_elf_audit(binary:Path,overlay:Path,sysroot:Path,candidate:Path)->dict:
-    # Purely observational recursive ELF scan of the controlled candidate world.
+    # Inspeccion fisica; no prueba por si sola la resolucion del cargador
+    # real dentro del RuntimeLease. Nunca consultar rutas del host.
+    _certify_proxy_material(sysroot)
     roots=[overlay/'usr/lib/x86_64-linux-gnu',overlay/'lib/x86_64-linux-gnu',
            overlay/'usr/lib',sysroot/'usr/lib/x86_64-linux-gnu',
            sysroot/'lib/x86_64-linux-gnu',sysroot/'usr/lib',sysroot/'lib']
@@ -378,6 +441,7 @@ def _recursive_elf_audit(binary:Path,overlay:Path,sysroot:Path,candidate:Path)->
     seen=set()
     missing=set()
     records=[]
+    accepted_runpaths=[]
     while work:
         current=work.pop(0)
         real=current.resolve(strict=True)
@@ -386,12 +450,16 @@ def _recursive_elf_audit(binary:Path,overlay:Path,sysroot:Path,candidate:Path)->
         if not (real.is_relative_to(candidate.resolve()) or real.is_relative_to(sysroot.resolve())):
             raise RuntimeError('ELF escapes Esbirro controlled roots: '+str(real))
         seen.add(real)
-        needed=_needed(current)
+        needed,runpath_roots=_needed(current,sysroot)
+        if runpath_roots:
+            accepted_runpaths.append(str(real))
         targets={}
         for soname in needed:
-            if '/' in soname or soname in ('.','..'):
+            if not soname or '/' in soname or soname in ('.','..'):
                 raise RuntimeError('Invalid ELF dependency name: '+soname)
-            choices=[p/soname for p in roots if (p/soname).is_file()]
+            # DT_RUNPATH solo afecta dependencias directas de ESTE ELF.
+            # Se busca exclusivamente en rutas homologadas del mundo.
+            choices=[p/soname for p in [*runpath_roots,*roots] if (p/soname).is_file()]
             if not choices:
                 missing.add(soname)
                 targets[soname]=None
@@ -402,19 +470,24 @@ def _recursive_elf_audit(binary:Path,overlay:Path,sysroot:Path,candidate:Path)->
                 raise RuntimeError('ELF dependency escapes controlled world: '+str(selected))
             targets[soname]=str(selected)
             work.append(selected)
-        records.append({'file':str(current),'needed':needed,'resolved':targets})
+        records.append({'file':str(current),'needed':needed,
+                        'allowed_runpath':PROXY_RUNPATH if runpath_roots else None,
+                        'resolved':targets})
     output={'status':'ELF_CLOSURE_CANDIDATE_NOT_RUNTIME_CERTIFICATION',
             'root_elf':str(binary),'visited_elf_files':len(seen),
-            'missing':sorted(missing),'records':records}
+            'missing':sorted(missing),
+            'accepted_certified_runpaths':accepted_runpaths,
+            'records':records}
     (candidate/'ELF_CLOSURE.json').write_text(json.dumps(output,indent=2)+'\n',encoding='utf-8')
-    print('ELF RECURSIVE:',len(seen),'objects;',len(missing),'missing',flush=True)
+    print('ELF RECURSIVE:',len(seen),'objects;',len(missing),'missing;',
+          len(accepted_runpaths),'certified RUNPATHs',flush=True)
     return output
 
 def _elf_inventory(binary:Path,overlay:Path,sysroot:Path)->list[str]:
     search=[overlay/'usr/lib/x86_64-linux-gnu', sysroot/'usr/lib/x86_64-linux-gnu',
         sysroot/'lib/x86_64-linux-gnu',sysroot/'usr/lib',sysroot/'lib']
     missing=[]
-    for item in _needed(binary):
+    for item in _needed(binary)[0]:
         p=next((d/item for d in search if (d/item).is_file()),None)
         if p is None:missing.append(item)
         print(('FOUND' if p else 'NOT FOUND'),'ELF NEEDED',item,flush=True)
