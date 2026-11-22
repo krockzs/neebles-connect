@@ -53,7 +53,7 @@ def load_profile()->None:
     QT_VERSION=toolchain['qt_version']
     GCC_MAJOR=toolchain['gcc_major']
     PROFILE_SYSROOT=_rel(toolchain['sysroot_relative'])
-    if (re.fullmatch(r'[0-9]+(?:\\.[0-9]+){2}',QT_VERSION) is None
+    if (re.fullmatch(r'[0-9]+(?:\.[0-9]+){2}',QT_VERSION) is None
         or type(GCC_MAJOR) is not int or GCC_MAJOR < 10):
         raise RuntimeError('Invalid certified Qt/GCC toolchain')
 
@@ -221,7 +221,7 @@ def release_version(connect:Path)->str:
     cargo=tomllib.loads((connect/'runtime/Cargo.toml').read_text(encoding='utf-8'))
     version=manifest.get('version')
     if (manifest.get('name')!='neebles-connect' or not isinstance(version,str)
-        or re.fullmatch(r'[0-9]+(?:\\.[0-9]+){2}(?:[-+][0-9A-Za-z.-]+)?',version) is None
+        or re.fullmatch(r'[0-9]+(?:\.[0-9]+){2}(?:[-+][0-9A-Za-z.-]+)?',version) is None
         or cargo.get('package',{}).get('version')!=version):
         raise RuntimeError('Connect manifest version and Cargo package version mismatch')
     return version
@@ -252,7 +252,7 @@ def audit(connect: Path, custom: Path) -> list[dict]:
     global SOURCE_FILES
     SOURCE_FILES=tuple(
         name.decode('utf-8')
-        for name in git('ls-files','-z',binary=True).split(b'\\x00') if name
+        for name in git('ls-files','-z',binary=True).split(b'\x00') if name
     )
     if (not SOURCE_FILES or len(SOURCE_FILES)!=len(set(SOURCE_FILES))
         or 'tooling/esbirro/build_connect.py' not in SOURCE_FILES
