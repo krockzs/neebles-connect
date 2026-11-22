@@ -11,14 +11,14 @@ def js(path): return json.loads(read(path))
 class Connect102ContractTests(unittest.TestCase):
     def test_manifest(self):
         m=js('manifest.json')
-        self.assertEqual((m['schema'],m['name'],m['version']), (4,'neebles-connect','1.0.4'))
+        self.assertEqual((m['schema'],m['name'],m['version']), (4,'neebles-connect','1.0.5'))
         self.assertEqual(m['entrypoint'],'runtime/neebles-connect')
 
     def test_install_vault_and_rootfs(self):
         contract=js('lifecycle.json')
         self.assertEqual(contract['transitions']['install']['operations']['ensure-secrets-vault']['munition']['step'],'install-vault')
         self.assertEqual(contract['transitions']['open']['operations']['launch-runtime']['munition']['step'],'open-runtime')
-        self.assertEqual(contract['transitions']['update']['operations']['ensure-secrets-vault']['munition']['step'],'install-vault')
+        self.assertEqual(contract['transitions']['update']['operations'], {})
 
     def test_no_legacy_profiles(self):
         for f in ['ui/desktop/MainWindow.cpp','ui/desktop/MainWindow.h','runtime/src/main.rs']:
