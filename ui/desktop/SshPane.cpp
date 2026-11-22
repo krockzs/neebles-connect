@@ -1,5 +1,6 @@
 #include "SshPane.h"
 #include "SshTerminal.h"
+#include "ConnectionActionUi.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -158,18 +159,28 @@ bool retryUntil(const std::function<int()>& operation, std::atomic<bool>& active
 SshPane::SshPane(QString host,int port,QString username,QWidget* parent)
   : QWidget(parent),host_(std::move(host)),port_(port),user_(std::move(username)) {
     auto* layout=new QVBoxLayout(this);
-    auto* controls=new QHBoxLayout();
-    connect_=new QPushButton(QStringLiteral("Conectar SSH"),this);
-    disconnect_=new QPushButton(QStringLiteral("Desconectar"),this);
+    layout->setContentsMargins(2,2,2,2);
+    layout->setSpacing(2);
+
+    connect_=new QPushButton(this);
+    disconnect_=new QPushButton(this);
+
+    ConnectionActionUi::configure(
+        connect_, ConnectionActionUi::Action::Connect,
+        QStringLiteral("Conectar SSH"));
+    ConnectionActionUi::configure(
+        disconnect_, ConnectionActionUi::Action::Disconnect,
+        QStringLiteral("Desconectar SSH"));
+
     disconnect_->setEnabled(false);
-    controls->addWidget(connect_);
-    controls->addWidget(disconnect_);
-    controls->addStretch();
-    layout->addLayout(controls);
-    status_=new QLabel(QStringLiteral("SSH · %1@%2:%3 · desconectado").arg(user_,host_).arg(port_),this);
-    layout->addWidget(status_);
+    connect_->hide();
+    disconnect_->hide();
+
     terminal_=new SshTerminal(this);
     layout->addWidget(terminal_,1);
+
+    status_=new QLabel(QStringLiteral("SSH · %1@%2:%3 · desconectado").arg(user_,host_).arg(port_),this);
+    layout->addWidget(status_);
     terminal_->setSendHandler([this](QByteArray b){sendBytes(std::move(b));});
     terminal_->setResizeHandler([this](int rows,int cols){requestSize(rows,cols);});
     QObject::connect(connect_,&QPushButton::clicked,this,[this](){

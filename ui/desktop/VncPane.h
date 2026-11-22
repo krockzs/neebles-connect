@@ -15,6 +15,7 @@
 #include <vector>
 
 class QLabel;
+class QVBoxLayout;
 class QPushButton;
 class QTimer;
 class QKeyEvent;
@@ -87,6 +88,8 @@ public:
     int selectedMonitor() const { return selectedMonitor_; }
     bool selectMonitor(int index);
     bool copySelectedMonitor() const;
+    QPushButton* connectControl() const { return connect_; }
+    QPushButton* disconnectControl() const { return disconnect_; }
 private:
     void poll();
     void updateUi(const QString& status);
@@ -99,6 +102,7 @@ private:
     VncScreen* screen_ = nullptr;
     QPushButton* connect_ = nullptr;
     QPushButton* disconnect_ = nullptr;
+    QVBoxLayout* rootLayout_ = nullptr;
     QLabel* status_ = nullptr;
     QTimer* timer_ = nullptr;
     std::shared_ptr<VncSessionState> session_;

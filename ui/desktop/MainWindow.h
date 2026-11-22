@@ -22,6 +22,8 @@ class QFormLayout;
 class QWidget;
 class QLabel;
 class QToolButton;
+class QTimer;
+class QResizeEvent;
 class QScrollArea;
 class VncPane;
 
@@ -43,10 +45,16 @@ class MainWindow final : public QMainWindow {
 public:
     MainWindow(QString moduleRoot, QString version, QWidget* parent = nullptr);
 private:
+    void showBriefNotice(const QString& message);
+    void positionBriefNotice();
+    void resizeEvent(QResizeEvent* event) override;
     void showAdmin(int view);
     void syncNavigation();
     void refreshVisualState();
     void syncSavedTabs();
+    void loadTabOrder();
+    void persistTabOrder();
+    void restoreTabOrder();
     void buildSavedTab(const ConnectProfile& profile);
     QTabWidget* savedSubtab(const QString& profileId) const;
     bool activeConnection(QWidget** pane = nullptr, int* protocol = nullptr) const;
@@ -56,6 +64,9 @@ private:
     bool runStructure(QString description, std::function<QJsonObject()> operation,
                       std::function<void(const QJsonObject&)> onFinish);
     QString groupFor(const QString& profileId) const;
+    QString equipmentColor(const QString& profileId) const;
+    void setEquipmentColor(const QString& profileId);
+    void refreshEquipmentTabColors();
     void moveDashboardRow(int row, int offset);
     void moveEquipmentToGroup(const QString& profileId, const QString& groupId);
     void addDashboardGroup();
@@ -100,8 +111,9 @@ private:
     QWidget* brandLogo_ = nullptr;
     QWidget* sidebarEdition_ = nullptr;
     QVBoxLayout* sidebarLayout_ = nullptr;
-    QToolButton* stopTool_ = nullptr;
     QToolButton* copyTool_ = nullptr;
+    QLabel* briefToast_ = nullptr;
+    QTimer* briefToastTimer_ = nullptr;
     QWidget* monitorTools_ = nullptr;
     QVBoxLayout* monitorLayout_ = nullptr;
     QVector<QString> tabOrder_;
@@ -112,6 +124,7 @@ private:
     bool syncingTabs_ = false;
     bool lastCompact_ = false;
     int visualProtocol_ = -1;
+    int copyIconProtocol_ = -1;
     VncPane* visualVncPane_ = nullptr; // Observation only; never owned.
     std::uint64_t visualVncRevision_ = 0;
     int visualMonitorSelection_ = -2;

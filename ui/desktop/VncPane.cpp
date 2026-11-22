@@ -2,6 +2,7 @@
 // RFB sockets, authentication, framebuffer mutation and outbound input stay
 // strictly in the worker. QWidget never invokes LibVNCClient network APIs.
 #include "VncPane.h"
+#include "ConnectionActionUi.h"
 
 #include <QClipboard>
 #include <QEvent>
@@ -9,11 +10,16 @@
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QInputDialog>
+#include <QStyle>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QIcon>
+#include <QPixmap>
+#include <QPen>
+#include <QColor>
 #include <QPushButton>
 #include <QRectF>
 #include <QSizePolicy>
@@ -466,18 +472,29 @@ void VncScreen::wheelEvent(QWheelEvent* e) {
 
 VncPane::VncPane(QString host,int port,QWidget* parent)
     : QWidget(parent),host_(std::move(host)),port_(port) {
-    auto* layout=new QVBoxLayout(this);
-    auto* toolbar=new QHBoxLayout();
-    toolbar->addWidget(new QLabel(QStringLiteral("VNC · %1:%2").arg(host_).arg(port_),this));
-    toolbar->addStretch();
-    connect_=new QPushButton(QStringLiteral("Conectar"),this);
-    disconnect_=new QPushButton(QStringLiteral("Desconectar"),this);
-    toolbar->addWidget(connect_);toolbar->addWidget(disconnect_);
-    layout->addLayout(toolbar);
+    rootLayout_=new QVBoxLayout(this);
+    rootLayout_->setContentsMargins(2,2,2,2);
+    rootLayout_->setSpacing(2);
+
+    connect_=new QPushButton(this);
+    disconnect_=new QPushButton(this);
+
+    ConnectionActionUi::configure(
+        connect_, ConnectionActionUi::Action::Connect,
+        QStringLiteral("Conectar VNC"));
+    ConnectionActionUi::configure(
+        disconnect_, ConnectionActionUi::Action::Disconnect,
+        QStringLiteral("Desconectar VNC"));
+
+    connect_->hide();
+    disconnect_->hide();
+
     screen_=new VncScreen(this);
-    layout->addWidget(screen_,1);
+    rootLayout_->addWidget(screen_,1);
+
     status_=new QLabel(QStringLiteral("VNC · desconectado"),this);
-    layout->addWidget(status_);
+    rootLayout_->addWidget(status_);
+
     timer_=new QTimer(this);timer_->setInterval(40);
     QObject::connect(timer_,&QTimer::timeout,this,[this](){poll();});
     QObject::connect(connect_,&QPushButton::clicked,this,[this](){
@@ -496,6 +513,7 @@ void VncPane::updateUi(const QString& text) {
     connect_->setEnabled(!busy);
     disconnect_->setEnabled(busy);
     status_->setText(text);
+
 }
 void VncPane::connectNow(const QString& oneShotPassword) {
     if(accessGuard_ && !accessGuard_())return;

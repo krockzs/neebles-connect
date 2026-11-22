@@ -134,7 +134,21 @@ QString SshTerminal::selectionText() const {
         QString text;
         for (int col = begin; col < end; ++col) {
             VTermScreenCell cell{};
-            if (cellAt(row, col, &cell)) text += cellText(cell);
+            if (!cellAt(row, col, &cell)) continue;
+
+            // libvterm usa width=0 para la segunda columna
+            // de un caracter ancho. Si la seleccion comienza
+            // ahi, incluir el glifo desde su primera celda.
+            if (cell.width == 0) {
+                if (col == begin && col > 0) {
+                    VTermScreenCell leading{};
+                    if (cellAt(row, col - 1, &leading) &&
+                        leading.width > 1)
+                        text += cellText(leading);
+                }
+                continue;
+            }
+            text += cellText(cell);
         }
         while (text.endsWith(QChar(' '))) text.chop(1);
         lines.append(text);
@@ -149,7 +163,28 @@ bool SshTerminal::copySelectionToClipboard() const {
     return true;
 }
 
+bool SshTerminal::pasteClipboardText() {
+    if (!send_) return false;
+
+    const QString text = QApplication::clipboard()->text(
+        QClipboard::Clipboard);
+
+    if (text.isEmpty()) return false;
+
+    QByteArray bytes = text.toUtf8();
+    if (bytes.isEmpty()) return false;
+
+    send_(std::move(bytes));
+    return true;
+}
+
 void SshTerminal::mousePressEvent(QMouseEvent* event) {
+    if (event->button() == Qt::RightButton) {
+        setFocus();
+        pasteClipboardText();
+        event->accept();
+        return;
+    }
     if (event->button() != Qt::LeftButton) { QWidget::mousePressEvent(event); return; }
     setFocus();
     selectionAnchor_ = positionAt(event->position().toPoint());
@@ -213,41 +248,168 @@ void SshTerminal::resizeGrid() {
 }
 
 void SshTerminal::paintEvent(QPaintEvent*) {
-    QPainter p(this);
-    p.fillRect(rect(),QColor(QStringLiteral("#09090B")));
-    if (!screen_) return;
-    p.setFont(font());
-    const int baseline=QFontMetrics(font()).ascent();
-    const int firstVisible = int(history_.size()) - scrollOffset_;
+    QPainter painter(this);
+
+    const QColor defaultForeground(
+        QStringLiteral("#E4E4E7"));
+    const QColor defaultBackground(
+        QStringLiteral("#09090B"));
+
+    painter.fillRect(rect(), defaultBackground);
+    if (!screen_ || !vt_) return;
+
+    const QFont baseFont = font();
+    const int baseline = QFontMetrics(baseFont).ascent();
+
+    // Resuelve los índices ANSI mediante la paleta
+    // certificada de libvterm, preservando RGB real.
+    const auto resolveColor =
+        [this, &defaultForeground, &defaultBackground](
+            VTermColor color, bool foreground) -> QColor {
+
+        if (foreground &&
+            VTERM_COLOR_IS_DEFAULT_FG(&color))
+            return defaultForeground;
+
+        if (!foreground &&
+            VTERM_COLOR_IS_DEFAULT_BG(&color))
+            return defaultBackground;
+
+        vterm_screen_convert_color_to_rgb(
+            screen_, &color);
+
+        return QColor(
+            color.rgb.red,
+            color.rgb.green,
+            color.rgb.blue);
+    };
+
+    const int firstVisible =
+        int(history_.size()) - scrollOffset_;
+
     CellPosition selectionFirst = selectionAnchor_;
     CellPosition selectionLast = selectionEnd_;
+
     if (selectionLast.row < selectionFirst.row ||
-        (selectionLast.row == selectionFirst.row && selectionLast.col < selectionFirst.col))
+        (selectionLast.row == selectionFirst.row &&
+         selectionLast.col < selectionFirst.col))
         std::swap(selectionFirst, selectionLast);
-    for (int r = 0; r < rows_; ++r) {
-        const int logicalRow = firstVisible + r;
-        if (hasSelection_ && logicalRow >= selectionFirst.row && logicalRow <= selectionLast.row) {
-            const int left = logicalRow == selectionFirst.row ? selectionFirst.col : 0;
-            const int right = logicalRow == selectionLast.row ? selectionLast.col + 1 : cols_;
-            if (right > left) p.fillRect(left * cellW_, r * cellH_,
-                                         (right - left) * cellW_, cellH_, QColor(59, 130, 246, 90));
-        }
-        for (int c = 0; c < cols_; ++c) {
+
+    for (int row = 0; row < rows_; ++row) {
+        const int logicalRow = firstVisible + row;
+
+        for (int col = 0; col < cols_; ++col) {
             VTermScreenCell cell{};
-            if (!cellAt(logicalRow, c, &cell) || cell.width == 0) continue;
+
+            if (!cellAt(logicalRow, col, &cell) ||
+                cell.width == 0)
+                continue;
+
+            QColor foreground = resolveColor(cell.fg, true);
+            QColor background = resolveColor(cell.bg, false);
+
             if (cell.attrs.reverse)
-                p.fillRect(c*cellW_, r*cellH_, cellW_, cellH_, QColor(QStringLiteral("#E4E4E7")));
-            p.setPen(cell.attrs.reverse ? QColor(QStringLiteral("#09090B")) :
-                                             QColor(QStringLiteral("#E4E4E7")));
+                std::swap(foreground, background);
+
+            const int columns =
+                std::max(1, int(cell.width));
+
+            const QRect cellRect(
+                col * cellW_,
+                row * cellH_,
+                columns * cellW_,
+                cellH_);
+
+            painter.fillRect(cellRect, background);
+
+            if (cell.attrs.conceal)
+                continue;
+
             const QString text = cellText(cell);
-            if (!text.isEmpty()) p.drawText(c*cellW_, r*cellH_+baseline, text);
+            if (text.isEmpty())
+                continue;
+
+            QFont cellFont = baseFont;
+            cellFont.setBold(cell.attrs.bold != 0);
+            cellFont.setItalic(cell.attrs.italic != 0);
+            cellFont.setUnderline(
+                cell.attrs.underline !=
+                VTERM_UNDERLINE_OFF);
+            cellFont.setStrikeOut(cell.attrs.strike != 0);
+
+            painter.save();
+            painter.setClipRect(cellRect);
+            painter.setFont(cellFont);
+            painter.setPen(foreground);
+            painter.drawText(
+                col * cellW_,
+                row * cellH_ + baseline,
+                text);
+            painter.restore();
+        }
+
+        // Selección dibujada por encima del texto,
+        // sin cambiar su contenido ni el portapapeles.
+        if (hasSelection_ &&
+            logicalRow >= selectionFirst.row &&
+            logicalRow <= selectionLast.row) {
+
+            int left =
+                logicalRow == selectionFirst.row
+                    ? selectionFirst.col : 0;
+
+            int right =
+                logicalRow == selectionLast.row
+                    ? selectionLast.col + 1 : cols_;
+
+            // No partir un glifo de dos columnas al
+            // dibujar el resaltado de seleccion.
+            if (left > 0 && left < cols_) {
+                VTermScreenCell firstCell{};
+                if (cellAt(logicalRow, left, &firstCell) &&
+                    firstCell.width == 0)
+                    --left;
+            }
+
+            if (right > 0 && right < cols_) {
+                VTermScreenCell lastCell{};
+                if (cellAt(logicalRow, right - 1, &lastCell) &&
+                    lastCell.width > 1)
+                    right = std::min(
+                        cols_,
+                        right + int(lastCell.width) - 1);
+            }
+
+            if (right > left) {
+                painter.fillRect(
+                    left * cellW_,
+                    row * cellH_,
+                    (right - left) * cellW_,
+                    cellH_,
+                    QColor(59, 130, 246, 90));
+            }
         }
     }
-    // Cursor is derived from libvterm's state rather than output escape strings.
-    VTermPos cursor{0,0};
-    vterm_state_get_cursorpos(vterm_obtain_state(vt_),&cursor);
-    if (scrollOffset_ == 0 && hasFocus() && cursor.row>=0 && cursor.row<rows_ && cursor.col>=0 && cursor.col<cols_)
-        p.fillRect(cursor.col*cellW_,(cursor.row+1)*cellH_-2,cellW_,2,QColor(QStringLiteral("#22D3EE")));
+
+    // Cursor original preservado.
+    VTermPos cursor{0, 0};
+    vterm_state_get_cursorpos(
+        vterm_obtain_state(vt_), &cursor);
+
+    if (scrollOffset_ == 0 &&
+        hasFocus() &&
+        cursor.row >= 0 &&
+        cursor.row < rows_ &&
+        cursor.col >= 0 &&
+        cursor.col < cols_) {
+
+        painter.fillRect(
+            cursor.col * cellW_,
+            (cursor.row + 1) * cellH_ - 2,
+            cellW_,
+            2,
+            QColor(QStringLiteral("#22D3EE")));
+    }
 }
 
 bool SshTerminal::event(QEvent* event) {
@@ -281,7 +443,9 @@ void SshTerminal::keyPressEvent(QKeyEvent* event) {
         return;
     }
     if (ctrl && shift && key==Qt::Key_V) {
-        input = QApplication::clipboard()->text().toUtf8();
+        if (pasteClipboardText()) event->accept();
+        else event->ignore();
+        return;
     } else if (ctrl && key>=Qt::Key_A && key<=Qt::Key_Z) {
         input.append(static_cast<char>(key-Qt::Key_A+1));
     } else {

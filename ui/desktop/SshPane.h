@@ -28,6 +28,8 @@ public:
     void disconnectNow();
     bool connected() const { return session_ && session_->authenticated.load(); }
     bool copySelectedText() const;
+    QPushButton* connectControl() const { return connect_; }
+    QPushButton* disconnectControl() const { return disconnect_; }
 private:
     struct SessionState {
         std::atomic<bool> running{true};

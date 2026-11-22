@@ -1,4 +1,9 @@
-# N.E.E.B.L.E.S. Connect 1.0.2
+# N.E.E.B.L.E.S. Connect 1.0.3
+
+## Actualización 1.0.3 (en preparación)
+
+Mejoras My Connect, terminal SSH, VNC, colores de equipos, orden persistente de pestañas y notificaciones. Construcción controlada mediante Esbirro y CUSTOM V2; actualización únicamente desde Boss. La información de 1.0.2 que sigue corresponde al historial de esa release.
+
 
 **Estado documental: 28-10-2026.** Connect **1.0.2** está publicado en Git `main`, seleccionado por CUSTOM V2 Construction y por el Registry de Boss. El operador informó **aceptación funcional en el Ryzen** el 28-10-2026: VNC con dos monitores, guardado de equipos y credenciales/usuarios separados, y funcionamiento general de las superficies probadas. El alcance de esa aceptación es el laboratorio informado; no implica certificación universal de cualquier hardware o protocolo futuro.
 

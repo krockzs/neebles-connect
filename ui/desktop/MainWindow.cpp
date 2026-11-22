@@ -1,8 +1,13 @@
 // NEEBLES Connect — My Connect uses exclusively Secrets structured KDBX records.
 #include "MainWindow.h"
+#include <cmath>
+#include <QFontMetrics>
+#include <QPaintEvent>
+#include <QResizeEvent>
 #include "ConnectStructures.h"
 #include "VncPane.h"
 #include "SshPane.h"
+#include "ConnectionActionUi.h"
 
 #include <QComboBox>
 #include <QCoreApplication>
@@ -12,6 +17,8 @@
 #include <QThreadPool>
 #include <QColor>
 #include <QColorDialog>
+#include <QCursor>
+#include <QMenu>
 #include <QInputDialog>
 #include <QSignalBlocker>
 #include <QStyle>
@@ -32,6 +39,8 @@
 #include <QLocale>
 #include <QProcess>
 #include <QStandardPaths>
+#include <QSettings>
+#include <QStringList>
 #include <QtEndian>
 #include <QJsonArray>
 #include <QJsonValue>
@@ -43,6 +52,8 @@
 #include <QPlainTextEdit>
 #include <QPair>
 #include <QPixmap>
+#include <QPainter>
+#include <QPen>
 #include <QSize>
 #include <QPushButton>
 #include <QScrollArea>
@@ -71,6 +82,9 @@ constexpr int kSsh = 0;
 constexpr int kVnc = 1;
 constexpr int kVsCode = 2;
 constexpr int kSunshine = 3;
+
+// Duración de avisos informativos breves.
+enum : int { kBriefNoticeMs = 3000 };
 
 QLabel* header(const QString& title, QWidget* parent) {
     auto* label = new QLabel(title, parent);
@@ -156,6 +170,215 @@ QString secretsLabel(const QString& root,const QString& key) {
     return code==QStringLiteral("es_CL")?QStringLiteral("Requiere desbloqueo"):
                                                QStringLiteral("Requires unlock");
 }
+
+// Obtiene los controles del panel activo, incluso sin conexión.
+std::pair<QPushButton*, QPushButton*> selectedPaneActions(QTabWidget* sub) {
+    if (!sub) return {nullptr, nullptr};
+    QWidget* page = sub->currentWidget();
+
+    if (auto* ssh = dynamic_cast<SshPane*>(page))
+        return {ssh->connectControl(), ssh->disconnectControl()};
+
+    if (auto* vnc = dynamic_cast<VncPane*>(page))
+        return {vnc->connectControl(), vnc->disconnectControl()};
+
+    return {nullptr, nullptr};
+}
+
+void refreshSubtabActionBar(QTabWidget* sub) {
+    if (!sub) return;
+
+    QWidget* corner = sub->cornerWidget(Qt::TopRightCorner);
+    if (!corner) return;
+
+    auto* connectButton = corner->findChild<QPushButton*>(
+        QStringLiteral("cornerConnect"));
+    auto* disconnectButton = corner->findChild<QPushButton*>(
+        QStringLiteral("cornerDisconnect"));
+
+    if (!connectButton || !disconnectButton) return;
+
+    const auto actions = selectedPaneActions(sub);
+    const bool supported = actions.first && actions.second;
+
+    corner->setVisible(supported);
+    connectButton->setEnabled(
+        supported && actions.first->isEnabled());
+    disconnectButton->setEnabled(
+        supported && actions.second->isEnabled());
+
+    const QString protocol =
+        dynamic_cast<SshPane*>(sub->currentWidget())
+            ? QStringLiteral("SSH")
+            : QStringLiteral("VNC");
+
+    connectButton->setToolTip(
+        QStringLiteral("Conectar ") + protocol);
+    disconnectButton->setToolTip(
+        QStringLiteral("Desconectar ") + protocol);
+    connectButton->setAccessibleName(connectButton->toolTip());
+    disconnectButton->setAccessibleName(disconnectButton->toolTip());
+}
+
+void installSubtabActionBar(QTabWidget* sub) {
+    if (!sub || sub->cornerWidget(Qt::TopRightCorner)) return;
+
+    auto* corner = new QWidget(sub);
+    corner->setObjectName(
+        QStringLiteral("connectionActionCorner"));
+
+    auto* bar = new QHBoxLayout(corner);
+    bar->setContentsMargins(2,0,4,0);
+    bar->setSpacing(5);
+
+    auto* connectButton = new QPushButton(corner);
+    auto* disconnectButton = new QPushButton(corner);
+
+    connectButton->setObjectName(QStringLiteral("cornerConnect"));
+    disconnectButton->setObjectName(QStringLiteral("cornerDisconnect"));
+
+    ConnectionActionUi::configure(
+        connectButton, ConnectionActionUi::Action::Connect,
+        QStringLiteral("Conectar"));
+    ConnectionActionUi::configure(
+        disconnectButton, ConnectionActionUi::Action::Disconnect,
+        QStringLiteral("Desconectar"));
+
+    bar->addWidget(connectButton);
+    bar->addWidget(disconnectButton);
+
+    sub->setCornerWidget(corner,Qt::TopRightCorner);
+
+    QObject::connect(
+        connectButton, &QPushButton::clicked,
+        sub, [sub]() {
+            const auto actions = selectedPaneActions(sub);
+            if (actions.first) actions.first->click();
+            refreshSubtabActionBar(sub);
+        });
+
+    QObject::connect(
+        disconnectButton, &QPushButton::clicked,
+        sub, [sub]() {
+            const auto actions = selectedPaneActions(sub);
+            if (actions.second) actions.second->click();
+            refreshSubtabActionBar(sub);
+        });
+
+    refreshSubtabActionBar(sub);
+}
+
+// C30B: la barra superior de My usa el color por ID estable.
+// El movimiento, las señales y el orden siguen bajo control Qt.
+class EquipmentColorTabBar final : public QTabBar {
+public:
+    explicit EquipmentColorTabBar(QWidget* parent)
+        : QTabBar(parent) {}
+
+    void replaceEquipmentColors(QHash<QString, QColor> colors) {
+        colors_ = std::move(colors);
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent* event) override {
+        QTabBar::paintEvent(event);
+        if (colors_.isEmpty()) return;
+
+        QPainter painter(this);
+
+        for (int index = 0; index < count(); ++index) {
+            const QString id = tabData(index).toString();
+
+            if (id.isEmpty() ||
+                id == QStringLiteral("fixed:admin") ||
+                id.startsWith(QStringLiteral("quick:")))
+                continue;
+
+            const auto found = colors_.constFind(id);
+
+            if (found == colors_.cend() ||
+                !found.value().isValid())
+                continue;
+
+            const QRect area =
+                tabRect(index).adjusted(1, 1, -1, -1);
+
+            if (area.isEmpty() ||
+                !area.intersects(event->rect()))
+                continue;
+
+            const QColor background = found.value();
+            painter.fillRect(area, background);
+
+            // Contraste automático por luminancia relativa.
+            const auto linear = [](int channel) -> double {
+                const double x = double(channel) / 255.0;
+                return x <= 0.04045
+                    ? x / 12.92
+                    : std::pow((x + 0.055) / 1.055, 2.4);
+            };
+
+            const double lum =
+                0.2126 * linear(background.red()) +
+                0.7152 * linear(background.green()) +
+                0.0722 * linear(background.blue());
+
+            const QColor foreground = lum > 0.179
+                ? QColor(Qt::black)
+                : QColor(Qt::white);
+
+            painter.setPen(foreground);
+
+            QFont labelFont = font();
+            labelFont.setBold(index == currentIndex());
+            painter.setFont(labelFont);
+
+            const QRect labelArea =
+                area.adjusted(10, 0, -10, 0);
+
+            const QString label =
+                painter.fontMetrics().elidedText(
+                    tabText(index),
+                    elideMode(),
+                    std::max(1, labelArea.width())
+                );
+
+            painter.drawText(
+                labelArea,
+                Qt::AlignCenter | Qt::TextSingleLine,
+                label
+            );
+
+            if (index == currentIndex()) {
+                // Indicador de tab activo sin sustituir su color.
+                painter.fillRect(
+                    area.left() + 4,
+                    area.bottom() - 2,
+                    std::max(0, area.width() - 8),
+                    3,
+                    foreground
+                );
+            }
+        }
+    }
+
+private:
+    QHash<QString, QColor> colors_;
+};
+
+// setTabBar() es protegido en QTabWidget.
+class EquipmentColorTabsWidget final : public QTabWidget {
+public:
+    explicit EquipmentColorTabsWidget(QWidget* parent)
+        : QTabWidget(parent) {
+        setTabBar(new EquipmentColorTabBar(this));
+    }
+
+    EquipmentColorTabBar* equipmentBar() const {
+        return static_cast<EquipmentColorTabBar*>(tabBar());
+    }
+};
 
 } // namespace
 
@@ -263,34 +486,21 @@ MainWindow::MainWindow(QString moduleRoot, QString version, QWidget* parent)
     copyTool_->setAutoRaise(true);
     copyTool_->setFixedSize(28,28);
     tools->addWidget(copyTool_);
-    stopTool_ = new QToolButton(contextual);
-    stopTool_->setIcon(style()->standardIcon(QStyle::SP_MediaStop));
-    stopTool_->setToolTip(QStringLiteral("Detener únicamente la conexión seleccionada"));
-    stopTool_->setAutoRaise(true);
-    stopTool_->setFixedSize(28,28);
-    tools->addWidget(stopTool_);
     sideLayout->insertWidget(sideLayout->count()-2, contextual);
     contextual->setObjectName(QStringLiteral("connectionTools"));
     contextual->hide();
-    QObject::connect(stopTool_, &QToolButton::clicked, this, [this]() {
-        QWidget* pane = nullptr; int protocol = -1;
-        if (!activeConnection(&pane, &protocol)) return;
-        if (protocol == kSsh) static_cast<SshPane*>(pane)->disconnectNow();
-        else if (protocol == kVnc) static_cast<VncPane*>(pane)->disconnectNow();
-        refreshVisualState();
-    });
     QObject::connect(copyTool_, &QToolButton::clicked, this, [this]() {
         QWidget* pane = nullptr;
         int protocol = -1;
         if (!activeConnection(&pane, &protocol)) return;
         const bool copied = protocol == kSsh ? static_cast<SshPane*>(pane)->copySelectedText() :
                             protocol == kVnc ? static_cast<VncPane*>(pane)->copySelectedMonitor() : false;
-        statusBar()->showMessage(copied ? QStringLiteral("Copiado al portapapeles") :
-            QStringLiteral("No hay imagen/texto válido para copiar"), 3500);
+        showBriefNotice(copied ? QStringLiteral("Copiado al portapapeles") :
+            QStringLiteral("No hay imagen/texto válido para copiar"));
     });
     horizontal->addWidget(sidebar_);
 
-    tabs_ = new QTabWidget(root);
+    tabs_ = new EquipmentColorTabsWidget(root);
     tabs_->setTabsClosable(true);
     tabs_->setMovable(true);
     tabs_->setDocumentMode(true);
@@ -305,26 +515,49 @@ MainWindow::MainWindow(QString moduleRoot, QString version, QWidget* parent)
     tabs_->tabBar()->setTabButton(0, QTabBar::RightSide, nullptr);
     tabs_->tabBar()->setTabButton(0, QTabBar::LeftSide, nullptr);
     tabs_->tabBar()->setTabData(0, QStringLiteral("fixed:admin"));
+    loadTabOrder();
     setCentralWidget(root);
-    statusBar()->showMessage(QStringLiteral("Connect 1.0.1 · Quick libre · My protegido por Secrets"));
+    briefToast_ = new QLabel(root);
+    briefToast_->setObjectName(QStringLiteral("neeblesBriefToast"));
+    briefToast_->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    briefToast_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    briefToast_->setWordWrap(true);
+    briefToast_->setStyleSheet(QStringLiteral(
+        "QLabel#neeblesBriefToast { background: #5B21B6; color: #FFFFFF; "
+        "border: 1px solid #A855F7; border-radius: 8px; "
+        "padding: 10px 14px; font-weight: 600; }"));
+    briefToast_->hide();
+    briefToastTimer_ = new QTimer(this);
+    briefToastTimer_->setSingleShot(true);
+    QObject::connect(briefToastTimer_, &QTimer::timeout,
+                     briefToast_, &QWidget::hide);
+    showBriefNotice(QStringLiteral("Connect %1 · Quick libre · My protegido por Secrets").arg(version_));
     QObject::connect(tabs_, &QTabWidget::tabCloseRequested, this, [this](int index) { closeTab(index); });
     QObject::connect(tabs_, &QTabWidget::currentChanged, this, [this](int) {
         syncNavigation(); refreshVisualState();
     });
     QObject::connect(tabs_->tabBar(), &QTabBar::tabMoved, this, [this](int, int) {
         if (syncingTabs_) return;
-        QSignalBlocker guard(tabs_->tabBar());
-        const int fixed = [&]() {
-            for (int i = 0; i < tabs_->count(); ++i)
-                if (tabs_->tabBar()->tabData(i).toString() == QStringLiteral("fixed:admin")) return i;
-            return -1;
-        }();
-        if (fixed > 0) tabs_->tabBar()->moveTab(fixed, 0);
-        tabOrder_.clear();
-        for (int i = 1; i < tabs_->count(); ++i) {
-            const QString id = tabs_->tabBar()->tabData(i).toString();
-            if (!id.startsWith(QStringLiteral("quick:"))) tabOrder_.append(id);
+
+        int fixed = -1;
+        for (int i = 0; i < tabs_->count(); ++i) {
+            if (tabs_->tabBar()->tabData(i).toString() ==
+                    QStringLiteral("fixed:admin")) {
+                fixed = i;
+                break;
+            }
         }
+
+        if (fixed > 0) {
+            // No bloquear señales Qt: QTabWidget también debe
+            // sincronizar la página correspondiente al movimiento.
+            syncingTabs_ = true;
+            tabs_->tabBar()->moveTab(fixed, 0);
+            syncingTabs_ = false;
+            return;
+        }
+
+        persistTabOrder();
     });
     auto* visualTimer = new QTimer(this);
     visualTimer->setInterval(400);
@@ -340,6 +573,39 @@ MainWindow::MainWindow(QString moduleRoot, QString version, QWidget* parent)
     monitor->start();
 }
 
+void MainWindow::positionBriefNotice() {
+    if (!briefToast_ || !centralWidget()) return;
+    QWidget* root = centralWidget();
+    constexpr int kMargin = 18;
+    briefToast_->move(
+        std::max(kMargin, root->width() - briefToast_->width() - kMargin),
+        std::max(kMargin, root->height() - briefToast_->height() - kMargin));
+}
+
+void MainWindow::showBriefNotice(const QString& message) {
+    // Los mensajes de progreso de Secrets tienen prioridad en la barra.
+    if (!structureInFlight_ && !vaultLoading_)
+        statusBar()->showMessage(message, kBriefNoticeMs);
+    if (!briefToast_ || !briefToastTimer_) return;
+    briefToastTimer_->stop();
+    briefToast_->setText(message);
+    const int targetWidth = std::clamp(
+        briefToast_->fontMetrics().horizontalAdvance(message) + 54,
+        220, 480);
+    briefToast_->setFixedWidth(targetWidth);
+    briefToast_->adjustSize();
+    positionBriefNotice();
+    briefToast_->raise();
+    briefToast_->show();
+    briefToastTimer_->start(kBriefNoticeMs);
+}
+
+void MainWindow::resizeEvent(QResizeEvent* event) {
+    QMainWindow::resizeEvent(event);
+    if (briefToast_ && briefToast_->isVisible())
+        positionBriefNotice();
+}
+
 void MainWindow::syncNavigation() {
     const int active = tabs_->currentIndex() == 0 ? adminStack_->currentIndex() : -1;
     for (QPushButton* button : adminButtons_)
@@ -350,7 +616,7 @@ void MainWindow::showAdmin(int view) {
     if (view < kDashboard || view > kSaved) return;
     if ((view == kCreate || view == kSaved) && !ensureVaultReady()) {
         view = kDashboard;
-        statusBar()->showMessage(QStringLiteral("My Connect requiere Secrets desbloqueado"), 4000);
+        showBriefNotice(QStringLiteral("My Connect requiere Secrets desbloqueado"));
     }
     adminStack_->setCurrentIndex(view);
     static const QVector<QString> titles = {
@@ -524,8 +790,16 @@ void MainWindow::buildSaved() {
     connect(missingVault_,&QPushButton::clicked,this,[this](){requestVault();});
     auto* scroller = new QScrollArea(page);
     scroller->setWidgetResizable(true);
+    scroller->setFrameShape(QFrame::NoFrame);
+    scroller->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
+
     auto* contents = new QWidget(scroller);
+    contents->setMaximumWidth(1180);
+
     savedList_ = new QVBoxLayout(contents);
+    savedList_->setContentsMargins(12,14,12,18);
+    savedList_->setSpacing(16);
+
     scroller->setWidget(contents);
     outer->addWidget(scroller, 1);
     adminStack_->addWidget(page);
@@ -788,7 +1062,7 @@ bool MainWindow::applyVaultSnapshot(const QJsonObject& snapshot) {
     }
     QJsonArray layoutRows;
     if (snapshot.value(QStringLiteral("layoutMissing")).toBool()) {
-        for (const auto& p : loaded) layoutRows.append(QJsonObject{
+        for (const auto& p : loaded) layoutRows.prepend(QJsonObject{
             {QStringLiteral("kind"), QStringLiteral("host")},
             {QStringLiteral("id"), p.id},
             {QStringLiteral("group"), QString()}
@@ -816,10 +1090,18 @@ bool MainWindow::applyVaultSnapshot(const QJsonObject& snapshot) {
             } else if (kind == QStringLiteral("host")) {
                 if (equipments.contains(id)) return false;
                 equipments.insert(id);
+
+                if (row.contains(QStringLiteral("color"))) {
+                    const QJsonValue value =
+                        row.value(QStringLiteral("color"));
+                    if (!value.isString() ||
+                        !QColor(value.toString()).isValid())
+                        return false;
+                }
             } else return false;
         }
         for (const auto& p : loaded) if (!equipments.contains(p.id)) {
-            layoutRows.append(QJsonObject{
+            layoutRows.prepend(QJsonObject{
                 {QStringLiteral("kind"), QStringLiteral("host")},
                 {QStringLiteral("id"), p.id},
                 {QStringLiteral("group"), QString()}
@@ -845,18 +1127,20 @@ bool MainWindow::runStructure(QString description, std::function<QJsonObject()> 
                               std::function<void(const QJsonObject&)> onFinish) {
     if (!ensureVaultReady()) return false;
     if (structureInFlight_ || vaultLoading_) {
-        statusBar()->showMessage(QStringLiteral("Secrets ocupado: termina la operación anterior"), 5000);
+        showBriefNotice(QStringLiteral("Secrets ocupado: termina la operación anterior"));
         return false;
     }
     structureInFlight_ = true;
     const quint64 epoch = vaultEpoch_;
     const QPointer<MainWindow> receiver(this);
+    if (briefToastTimer_) briefToastTimer_->stop();
+    if (briefToast_) briefToast_->hide();
     statusBar()->showMessage(description);
-    QThreadPool::globalInstance()->start([receiver, epoch, operation=std::move(operation),
+    QThreadPool::globalInstance()->start([receiver, epoch, description, operation=std::move(operation),
                                           onFinish=std::move(onFinish)]() mutable {
         const QJsonObject answer = operation();
         if (auto* app = QCoreApplication::instance()) {
-            QMetaObject::invokeMethod(app, [receiver, epoch, answer,
+            QMetaObject::invokeMethod(app, [receiver, epoch, description, answer,
                                             onFinish=std::move(onFinish)]() mutable {
                 if (!receiver) return;
                 receiver->structureInFlight_ = false;
@@ -866,6 +1150,13 @@ bool MainWindow::runStructure(QString description, std::function<QJsonObject()> 
                     return;
                 }
                 onFinish(answer);
+
+                // Retirar únicamente el progreso de esta
+                // operación. No borrar mensajes posteriores.
+                if (receiver->statusBar()->currentMessage()
+                        == description) {
+                    receiver->statusBar()->clearMessage();
+                }
             }, Qt::QueuedConnection);
         }
     });
@@ -890,29 +1181,65 @@ static QJsonObject writeDashboardInWorker(const QJsonArray& rows) {
     return QJsonObject{{QStringLiteral("ok"),ok},{QStringLiteral("error"),error}};
 }
 
-static QJsonArray assignHostToGroup(QJsonArray rows, const QString& id, const QString& group) {
-    for (int i = rows.size() - 1; i >= 0; --i) {
-        const auto row = rows.at(i).toObject();
-        if (row.value(QStringLiteral("kind")) == QStringLiteral("host") &&
-            row.value(QStringLiteral("id")).toString() == id) rows.removeAt(i);
+static QJsonArray assignHostToGroup(
+    QJsonArray rows,
+    const QString& id,
+    const QString& group
+) {
+    // Editar un equipo sin cambiar de grupo no debe
+    // alterar el orden manual previamente guardado.
+    for (const QJsonValue& item : rows) {
+        const QJsonObject row = item.toObject();
+        if (row.value(QStringLiteral("kind")).toString() ==
+                QStringLiteral("host") &&
+            row.value(QStringLiteral("id")).toString() == id &&
+            row.value(QStringLiteral("group")).toString() == group) {
+            return rows;
+        }
     }
-    const QJsonObject entry{{QStringLiteral("kind"),QStringLiteral("host")},
-        {QStringLiteral("id"),id},{QStringLiteral("group"),group}};
-    int pos = rows.size();
+
+    QString previousColor;
+    for (int i = rows.size() - 1; i >= 0; --i) {
+        const QJsonObject row = rows.at(i).toObject();
+        if (row.value(QStringLiteral("kind")).toString() ==
+                QStringLiteral("host") &&
+            row.value(QStringLiteral("id")).toString() == id) {
+            previousColor = row.value(QStringLiteral("color")).toString();
+            rows.removeAt(i);
+        }
+    }
+
+    QJsonObject entry{
+        {QStringLiteral("kind"), QStringLiteral("host")},
+        {QStringLiteral("id"), id},
+        {QStringLiteral("group"), group}
+    };
+
+    // Los equipos recién creados o movidos a
+    // Sin equipo aparecen primero.
+    int pos = group.isEmpty() ? 0 : rows.size();
+
     if (!group.isEmpty()) {
         for (int i = 0; i < rows.size(); ++i) {
-            const auto row = rows.at(i).toObject();
-            if (row.value(QStringLiteral("kind")) == QStringLiteral("group") &&
+            const QJsonObject row = rows.at(i).toObject();
+            if (row.value(QStringLiteral("kind")).toString() ==
+                    QStringLiteral("group") &&
                 row.value(QStringLiteral("id")).toString() == group) {
                 pos = i + 1;
                 while (pos < rows.size() &&
-                    rows.at(pos).toObject().value(QStringLiteral("kind")) != QStringLiteral("group"))
+                       rows.at(pos).toObject().value(
+                           QStringLiteral("kind")).toString() !=
+                           QStringLiteral("group")) {
                     ++pos;
+                }
                 break;
             }
         }
     }
-    rows.insert(pos,entry);
+
+    if (!previousColor.isEmpty())
+        entry.insert(QStringLiteral("color"),previousColor);
+    rows.insert(pos, entry);
     return rows;
 }
 
@@ -964,14 +1291,33 @@ void MainWindow::refreshSaved() {
         savedList_->addStretch();
         return;
     }
-    if (profiles_.isEmpty())
-        savedList_->addWidget(new QLabel(QStringLiteral("No hay equipos. Pulsa Crear equipo para comenzar.")));
-    for (const ConnectProfile& profile : profiles_) {
+    // Reutilizar íntegramente la tarjeta C16;
+    // únicamente cambia el orden de presentación.
+    auto drawEquipment = [this](const ConnectProfile& profile) {
+        const QString accent = equipmentColor(profile.id);
         auto* row = new QFrame();
-        row->setStyleSheet(QStringLiteral("QFrame { border: 1px solid #5B21B6; border-radius: 8px; }"));
+        row->setObjectName(QStringLiteral("myEquipmentCard"));
+        row->setStyleSheet(QStringLiteral(
+            "QFrame#myEquipmentCard {"
+            " background-color: #0D0B16;"
+            " border: 1px solid %1;"
+            " border-radius: 10px;"
+            "}"
+        ).arg(accent.isEmpty() ? QStringLiteral("#5B21B6") : accent));
+
         auto* layout = new QVBoxLayout(row);
+        layout->setContentsMargins(14,14,14,14);
+        layout->setSpacing(12);
+
         auto* heading = new QHBoxLayout();
+        heading->setContentsMargins(0,0,0,0);
+        heading->setSpacing(10);
         heading->addWidget(new QLabel(profile.name + QStringLiteral(" · ") + profile.host, row), 1);
+        auto* colorButton = new QPushButton(QStringLiteral("Color"),row);
+        colorButton->setToolTip(QStringLiteral("Color del equipo (transparente por defecto)"));
+        heading->addWidget(colorButton);
+        QObject::connect(colorButton,&QPushButton::clicked,this,
+            [this,id=profile.id](){setEquipmentColor(id);});
         auto* edit = new QPushButton(QStringLiteral("Editar equipo"), row);
         auto* remove = new QPushButton(QStringLiteral("Eliminar equipo"), row);
         heading->addWidget(edit); heading->addWidget(remove);
@@ -979,6 +1325,9 @@ void MainWindow::refreshSaved() {
         QObject::connect(edit, &QPushButton::clicked, this, [this, profile]() { editProfile(profile); });
         QObject::connect(remove, &QPushButton::clicked, this, [this, profile]() { deleteProfile(profile); });
         auto* connections = new QHBoxLayout();
+        connections->setContentsMargins(0,0,0,0);
+        connections->setSpacing(12);
+
         for (int protocol : {kSsh, kVnc, kVsCode, kSunshine}) {
             const QString title = protocol == kSsh ? QStringLiteral("SSH") :
                                   protocol == kVnc ? QStringLiteral("VNC") :
@@ -988,30 +1337,178 @@ void MainWindow::refreshSaved() {
                                  protocol == kVnc ? profile.hasVnc :
                                  protocol == kVsCode ? vsCodeCounts_.value(profile.id) > 0 :
                                                        profile.hasSunshine;
-            auto* group = new QVBoxLayout();
-            group->addWidget(new QLabel(title + (present ? QStringLiteral(" · configurado") :
-                                         QStringLiteral(" · vacío")), row));
-            auto* manage = new QPushButton(protocol == kVsCode ? QStringLiteral("＋ / Administrar") :
-                                           present ? QStringLiteral("Editar / Eliminar") :
-                                                     QStringLiteral("＋ Agregar"), row);
+            auto* protocolCard = new QFrame(row);
+            protocolCard->setObjectName(
+                QStringLiteral("myProtocolCard"));
+
+            protocolCard->setStyleSheet(QStringLiteral(
+                "QFrame#myProtocolCard {"
+                " background-color: #141020;"
+                " border: 1px solid #43305F;"
+                " border-radius: 7px;"
+                "}"
+            ));
+
+            auto* group = new QVBoxLayout(protocolCard);
+            group->setContentsMargins(10,10,10,10);
+            group->setSpacing(8);
+
+            auto* protocolLabel = new QLabel(
+                title + (present
+                    ? QStringLiteral(" · configurado")
+                    : QStringLiteral(" · vacío")),
+                protocolCard);
+
+            protocolLabel->setStyleSheet(QStringLiteral(
+                "color: #E9D5FF;"
+                "font-weight: 600;"
+            ));
+
+            group->addWidget(protocolLabel);
+
+            auto* manage = new QPushButton(
+                protocol == kVsCode
+                    ? QStringLiteral("＋ / Administrar")
+                    : present
+                        ? QStringLiteral("Editar / Eliminar")
+                        : QStringLiteral("＋ Agregar"),
+                protocolCard);
             group->addWidget(manage);
             QObject::connect(manage, &QPushButton::clicked, this, [this, profile, protocol]() {
                 if (protocol == kVsCode) manageVsCode(profile);
                 else configureFixedProtocol(profile, protocol);
             });
             if ((protocol == kSsh || protocol == kVnc) && present) {
-                auto* connectButton = new QPushButton(QStringLiteral("Conectar"), row);
+                auto* connectButton = new QPushButton(
+                    QStringLiteral("Conectar"), protocolCard);
                 group->addWidget(connectButton);
                 QObject::connect(connectButton, &QPushButton::clicked, this, [this, profile, protocol]() {
                     if (!ensureVaultReady()) return;
                     connectSaved(profile.id, protocol);
                 });
             }
-            connections->addLayout(group);
+            connections->addWidget(protocolCard, 1);
         }
+
         layout->addLayout(connections);
         savedList_->addWidget(row);
+    };
+
+    // Los encabezados utilizan los colores ya guardados
+    // en el layout de Secrets.
+    auto addGroupHeading = [this](
+        const QString& title,
+        const QString& color
+    ) {
+        auto* heading = new QLabel(title);
+        heading->setObjectName(
+            QStringLiteral("myConnectionsGroupHeading"));
+
+        heading->setStyleSheet(QStringLiteral(
+            "QLabel#myConnectionsGroupHeading {"
+            " color: #E9D5FF;"
+            " background-color: #141020;"
+            " border-left: 4px solid %1;"
+            " border-radius: 3px;"
+            " padding: 8px 12px;"
+            " font-weight: 600;"
+            "}"
+        ).arg(color));
+
+        savedList_->addWidget(heading);
+    };
+
+    QSet<QString> validGroups;
+    for (const QJsonValue& item : dashboardRows_) {
+        const QJsonObject row = item.toObject();
+        if (row.value(QStringLiteral("kind")).toString() ==
+                QStringLiteral("group")) {
+            validGroups.insert(
+                row.value(QStringLiteral("id")).toString());
+        }
     }
+
+    QHash<QString, const ConnectProfile*> byId;
+    for (const ConnectProfile& profile : profiles_) {
+        byId.insert(profile.id, &profile);
+    }
+
+    QSet<QString> displayed;
+
+    const auto drawGroupRows = [
+        this, &byId, &displayed, &validGroups, &drawEquipment
+    ](const QString& groupId, bool ungrouped) {
+        for (const QJsonValue& item : dashboardRows_) {
+            const QJsonObject row = item.toObject();
+
+            if (row.value(QStringLiteral("kind")).toString() !=
+                    QStringLiteral("host")) {
+                continue;
+            }
+
+            const QString assigned =
+                row.value(QStringLiteral("group")).toString();
+
+            const bool isUngrouped =
+                !validGroups.contains(assigned);
+
+            if (isUngrouped != ungrouped) continue;
+            if (!ungrouped && assigned != groupId) continue;
+
+            const QString id =
+                row.value(QStringLiteral("id")).toString();
+
+            const auto found = byId.constFind(id);
+            if (found == byId.constEnd() ||
+                displayed.contains(id)) {
+                continue;
+            }
+
+            drawEquipment(*found.value());
+            displayed.insert(id);
+        }
+    };
+
+    // El grupo Sin equipo aparece siempre primero.
+    addGroupHeading(
+        QStringLiteral("Sin equipo"),
+        QStringLiteral("#64748B"));
+
+    drawGroupRows(QString(), true);
+
+    // Equipos todavía no registrados en el layout.
+    for (const ConnectProfile& profile : profiles_) {
+        if (!displayed.contains(profile.id) &&
+            !validGroups.contains(groupFor(profile.id))) {
+            drawEquipment(profile);
+            displayed.insert(profile.id);
+        }
+    }
+
+    if (profiles_.isEmpty()) {
+        savedList_->addWidget(new QLabel(QStringLiteral(
+            "No hay equipos. Pulsa Crear equipo para comenzar.")));
+    }
+
+    // Conservar los grupos en su orden almacenado.
+    for (const QJsonValue& item : dashboardRows_) {
+        const QJsonObject group = item.toObject();
+
+        if (group.value(QStringLiteral("kind")).toString() !=
+                QStringLiteral("group")) {
+            continue;
+        }
+
+        const QString groupId =
+            group.value(QStringLiteral("id")).toString();
+
+        addGroupHeading(
+            group.value(QStringLiteral("name")).toString(),
+            group.value(QStringLiteral("color")).toString());
+
+        drawGroupRows(groupId, false);
+    }
+
     savedList_->addStretch();
 }
 
@@ -1023,7 +1520,7 @@ void MainWindow::resetEditor() {
     saveButton_->setText(QStringLiteral("Guardar equipo"));
     if (editGroup_) {
         editGroup_->clear();
-        editGroup_->addItem(QStringLiteral("Sin grupo"), QString());
+        editGroup_->addItem(QStringLiteral("Sin equipo"), QString());
         for (const QJsonValue& item : dashboardRows_) {
             const auto row = item.toObject();
             if (row.value(QStringLiteral("kind")).toString() == QStringLiteral("group"))
@@ -1047,7 +1544,7 @@ void MainWindow::editProfile(const ConnectProfile& profile) {
     saveButton_->setText(QStringLiteral("Actualizar equipo"));
     if (editGroup_) {
         editGroup_->clear();
-        editGroup_->addItem(QStringLiteral("Sin grupo"), QString());
+        editGroup_->addItem(QStringLiteral("Sin equipo"), QString());
         for (const QJsonValue& row : dashboardRows_)
             if (row.toObject().value(QStringLiteral("kind")).toString() == QStringLiteral("group"))
                 editGroup_->addItem(row.toObject().value(QStringLiteral("name")).toString(),
@@ -1501,7 +1998,7 @@ bool MainWindow::loadDashboardLayout() {
         if (error != QStringLiteral("entity_not_found")) return false;
         dashboardRows_ = QJsonArray{};
         for (const ConnectProfile& p:profiles_)
-            dashboardRows_.append(QJsonObject{
+            dashboardRows_.prepend(QJsonObject{
                 {QStringLiteral("kind"),QStringLiteral("host")},
                 {QStringLiteral("id"),p.id},{QStringLiteral("group"),QString()}});
         dashboardLayoutLoaded_ = true;
@@ -1529,12 +2026,20 @@ bool MainWindow::loadDashboardLayout() {
         } else if (kind==QStringLiteral("host")) {
             if (equipmentIds.contains(id)) return false;
             equipmentIds.insert(id);
+
+                if (row.contains(QStringLiteral("color"))) {
+                    const QJsonValue value =
+                        row.value(QStringLiteral("color"));
+                    if (!value.isString() ||
+                        !QColor(value.toString()).isValid())
+                        return false;
+                }
         } else return false;
     }
     dashboardRows_=loaded;
     for (const ConnectProfile& p : profiles_) {
         if(!equipmentIds.contains(p.id))
-            dashboardRows_.append(QJsonObject{
+            dashboardRows_.prepend(QJsonObject{
                 {QStringLiteral("kind"),QStringLiteral("host")},
                 {QStringLiteral("id"),p.id},{QStringLiteral("group"),QString()}});
     }
@@ -1556,14 +2061,145 @@ bool MainWindow::saveDashboardLayout() {
             if (!result.value(QStringLiteral("ok")).toBool()) {
                 dashboardRows_ = dashboardCommittedRows_;
                 renderDashboard();
+                refreshSaved();
+                refreshEquipmentTabColors();
                 QMessageBox::warning(this, QStringLiteral("Secrets"),
                     QStringLiteral("No se guardó el Dashboard (%1). Revisa el estado antes de repetir.")
                         .arg(result.value(QStringLiteral("error")).toString()));
                 return;
             }
             dashboardCommittedRows_ = rows;
-            statusBar()->showMessage(QStringLiteral("Organización guardada en Secrets"),3500);
+            showBriefNotice(QStringLiteral("Organización guardada en Secrets"));
         });
+}
+
+
+// Color opcional almacenado en la organización cifrada.
+QString MainWindow::equipmentColor(
+    const QString& profileId
+) const {
+    for (const QJsonValue& item : dashboardRows_) {
+        const QJsonObject row = item.toObject();
+        if (row.value(QStringLiteral("kind")).toString() !=
+                QStringLiteral("host") ||
+            row.value(QStringLiteral("id")).toString() != profileId)
+            continue;
+
+        const QString value =
+            row.value(QStringLiteral("color")).toString();
+
+        return value.isEmpty() || !QColor(value).isValid()
+            ? QString() : value;
+    }
+    return {};
+}
+
+void MainWindow::refreshEquipmentTabColors() {
+    if (!tabs_) return;
+
+    QHash<QString, QColor> colors;
+
+    for (int i = 1; i < tabs_->count(); ++i) {
+        const QString id =
+            tabs_->tabBar()->tabData(i).toString();
+
+        if (id.isEmpty() ||
+            id == QStringLiteral("fixed:admin") ||
+            id.startsWith(QStringLiteral("quick:")))
+            continue;
+
+        // Eliminar el cuadrito antiguo.
+        // El color ahora rellena la pestaña superior.
+        tabs_->setTabIcon(i, QIcon());
+
+        const QString stored = equipmentColor(id);
+
+        // Sin color: conservar tema original de Qt.
+        if (stored.isEmpty()) continue;
+
+        const QColor color(stored);
+
+        if (color.isValid())
+            colors.insert(id, color);
+    }
+
+    static_cast<EquipmentColorTabsWidget*>(tabs_)
+        ->equipmentBar()
+        ->replaceEquipmentColors(std::move(colors));
+}
+
+void MainWindow::setEquipmentColor(
+    const QString& profileId
+) {
+    if (!ensureVaultReady() ||
+        !dashboardLayoutLoaded_ ||
+        structureInFlight_) return;
+
+    int index = -1;
+
+    for (int i=0; i<dashboardRows_.size(); ++i) {
+        const QJsonObject row =
+            dashboardRows_.at(i).toObject();
+
+        if (row.value(QStringLiteral("kind")).toString() ==
+                QStringLiteral("host") &&
+            row.value(QStringLiteral("id")).toString() ==
+                profileId) {
+            index = i;
+            break;
+        }
+    }
+
+    if (index < 0) return;
+
+    const QString current = equipmentColor(profileId);
+
+    QMenu menu(this);
+    QAction* choose =
+        menu.addAction(QStringLiteral("Elegir color…"));
+    QAction* reset =
+        menu.addAction(QStringLiteral(
+            "Restablecer a transparente"));
+
+    QAction* selected = menu.exec(QCursor::pos());
+    if (!selected) return;
+
+    QString next = current;
+
+    if (selected == reset) {
+        next.clear();
+    } else if (selected == choose) {
+        const QColor selectedColor = QColorDialog::getColor(
+            current.isEmpty()
+                ? QColor(QStringLiteral("#A78BFA"))
+                : QColor(current),
+            this,
+            QStringLiteral("Color del equipo"));
+
+        if (!selectedColor.isValid()) return;
+        next = selectedColor.name(QColor::HexRgb);
+    } else {
+        return;
+    }
+
+    if (next == current) return;
+
+    const QJsonArray before = dashboardRows_;
+    QJsonObject row = dashboardRows_.at(index).toObject();
+
+    if (next.isEmpty())
+        row.remove(QStringLiteral("color"));
+    else
+        row.insert(QStringLiteral("color"),next);
+
+    dashboardRows_.replace(index,row);
+
+    if (!saveDashboardLayout())
+        dashboardRows_ = before;
+
+    refreshSaved();
+    renderDashboard();
+    refreshEquipmentTabColors();
 }
 
 QString MainWindow::groupFor(const QString& profileId) const {
@@ -1606,15 +2242,21 @@ void MainWindow::moveDashboardRow(int index,int delta) {
 void MainWindow::moveEquipmentToGroup(const QString& id,const QString& group) {
     if (!dashboardLayoutLoaded_||!ensureVaultReady()) return;
     const QJsonArray before=dashboardRows_;
+    QString previousColor;
     for(int i=dashboardRows_.size()-1;i>=0;--i) {
         const QJsonObject row=dashboardRows_.at(i).toObject();
         if (row.value(QStringLiteral("kind"))==QStringLiteral("host")&&
-            row.value(QStringLiteral("id")).toString()==id) dashboardRows_.removeAt(i);
+            row.value(QStringLiteral("id")).toString()==id) {
+            previousColor = row.value(QStringLiteral("color")).toString();
+            dashboardRows_.removeAt(i);
+        }
     }
-    const QJsonObject host{{QStringLiteral("kind"),QStringLiteral("host")},
+    QJsonObject host{{QStringLiteral("kind"),QStringLiteral("host")},
                            {QStringLiteral("id"),id},
                            {QStringLiteral("group"),group}};
-    int target=dashboardRows_.size();
+    if (!previousColor.isEmpty())
+        host.insert(QStringLiteral("color"),previousColor);
+    int target=group.isEmpty()?0:dashboardRows_.size();
     if (!group.isEmpty()) {
         int start=-1;
         for(int i=0;i<dashboardRows_.size();++i) {
@@ -1632,6 +2274,7 @@ void MainWindow::moveEquipmentToGroup(const QString& id,const QString& group) {
     dashboardRows_.insert(target,host);
     if (!saveDashboardLayout()) dashboardRows_=before;
     renderDashboard();
+    refreshSaved();
 }
 
 void MainWindow::addDashboardGroup() {
@@ -1699,6 +2342,13 @@ void MainWindow::renderDashboard() {
         auto* row=new QWidget();
         auto* h=new QHBoxLayout(row);
         h->setContentsMargins(6,3,6,3);h->setSpacing(5);
+        const QString accent=equipmentColor(profile.id);
+        if (!accent.isEmpty()) {
+            auto* stripe=new QFrame(row);
+            stripe->setFixedSize(5,24);
+            stripe->setStyleSheet(QStringLiteral("background-color: %1;").arg(accent));
+            h->addWidget(stripe);
+        }
         auto* label=new QLabel(profile.name,row);
         label->setToolTip(profile.host);
         h->addWidget(label,1);
@@ -1745,6 +2395,12 @@ void MainWindow::renderDashboard() {
         };
         addProtocol(kSsh,profile.hasSsh,QStringLiteral("neebles-connect-ssh-256.png"),QStringLiteral("SSH"));
         addProtocol(kVnc,profile.hasVnc,QStringLiteral("neebles-connect-vnc-256.png"),QStringLiteral("VNC"));
+        auto* palette=new QToolButton(row);
+        palette->setText(QStringLiteral("◉"));
+        palette->setToolTip(QStringLiteral("Color del equipo"));
+        h->addWidget(palette);
+        QObject::connect(palette,&QToolButton::clicked,this,
+            [this,id=profile.id](){setEquipmentColor(id);});
         if(orderIndex>=0) {
             auto* up=new QToolButton(row);up->setText(QStringLiteral("↑"));up->setToolTip(QStringLiteral("Subir"));
             auto* down=new QToolButton(row);down->setText(QStringLiteral("↓"));down->setToolTip(QStringLiteral("Bajar"));
@@ -1775,39 +2431,90 @@ void MainWindow::renderDashboard() {
         }
         dashboardList_->addWidget(widget);
     };
+    // Identificar todos los grupos válidos primero.
     QSet<QString> validGroups;
-    for(int rowIndex=0;rowIndex<dashboardRows_.size();++rowIndex) {
-        const QJsonObject row=dashboardRows_.at(rowIndex).toObject();
-        if(row.value(QStringLiteral("kind")).toString()!=QStringLiteral("group"))continue;
-        const QString group=row.value(QStringLiteral("id")).toString();
-        validGroups.insert(group);
-        addGroupLine(row.value(QStringLiteral("name")).toString(),
-                     row.value(QStringLiteral("color")).toString(),rowIndex);
-        for(int i=0;i<dashboardRows_.size();++i){
-            const auto hostRow=dashboardRows_.at(i).toObject();
-            if(hostRow.value(QStringLiteral("kind"))!=QStringLiteral("host") ||
-               hostRow.value(QStringLiteral("group")).toString()!=group) continue;
-            for(const auto& profile:profiles_)
-                if(profile.id==hostRow.value(QStringLiteral("id")).toString()){
-                    drawHost(profile,i);break;
-                }
+
+    for (const QJsonValue& item : dashboardRows_) {
+        const QJsonObject row = item.toObject();
+
+        if (row.value(QStringLiteral("kind")).toString() ==
+                QStringLiteral("group")) {
+            validGroups.insert(
+                row.value(QStringLiteral("id")).toString());
         }
     }
-    bool needUngrouped=false;
-    for(const auto& profile:profiles_)
-        if(!present.contains(profile.id)) {needUngrouped=true;break;}
-    if(needUngrouped) {
-        addGroupLine(QStringLiteral("Sin grupo"),QStringLiteral("#64748B"),-1);
-        for(int i=0;i<dashboardRows_.size();++i){
-            const auto hostRow=dashboardRows_.at(i).toObject();
-            if(hostRow.value(QStringLiteral("kind"))!=QStringLiteral("host") ||
-               validGroups.contains(hostRow.value(QStringLiteral("group")).toString())) continue;
-            for(const auto& profile:profiles_)
-                if(profile.id==hostRow.value(QStringLiteral("id")).toString()) {
-                    drawHost(profile,i);break;
-                }
+
+    // Sin equipo siempre se dibuja antes de los grupos.
+    addGroupLine(
+        QStringLiteral("Sin equipo"),
+        QStringLiteral("#64748B"), -1);
+
+    for (int i = 0; i < dashboardRows_.size(); ++i) {
+        const QJsonObject hostRow =
+            dashboardRows_.at(i).toObject();
+
+        if (hostRow.value(QStringLiteral("kind")).toString() !=
+                QStringLiteral("host") ||
+            validGroups.contains(
+                hostRow.value(QStringLiteral("group")).toString())) {
+            continue;
         }
-        for(const auto& profile:profiles_)if(!present.contains(profile.id))drawHost(profile,-1);
+
+        for (const ConnectProfile& profile : profiles_) {
+            if (profile.id ==
+                    hostRow.value(QStringLiteral("id")).toString()) {
+                drawHost(profile, i);
+                break;
+            }
+        }
+    }
+
+    for (const ConnectProfile& profile : profiles_) {
+        if (!present.contains(profile.id) &&
+            !validGroups.contains(groupFor(profile.id))) {
+            drawHost(profile, -1);
+        }
+    }
+
+    // Los grupos personalizados mantienen su orden.
+    for (int rowIndex = 0;
+         rowIndex < dashboardRows_.size(); ++rowIndex) {
+
+        const QJsonObject row =
+            dashboardRows_.at(rowIndex).toObject();
+
+        if (row.value(QStringLiteral("kind")).toString() !=
+                QStringLiteral("group")) {
+            continue;
+        }
+
+        const QString groupId =
+            row.value(QStringLiteral("id")).toString();
+
+        addGroupLine(
+            row.value(QStringLiteral("name")).toString(),
+            row.value(QStringLiteral("color")).toString(),
+            rowIndex);
+
+        for (int i = 0; i < dashboardRows_.size(); ++i) {
+            const QJsonObject hostRow =
+                dashboardRows_.at(i).toObject();
+
+            if (hostRow.value(QStringLiteral("kind")).toString() !=
+                    QStringLiteral("host") ||
+                hostRow.value(QStringLiteral("group")).toString() !=
+                    groupId) {
+                continue;
+            }
+
+            for (const ConnectProfile& profile : profiles_) {
+                if (profile.id ==
+                        hostRow.value(QStringLiteral("id")).toString()) {
+                    drawHost(profile, i);
+                    break;
+                }
+            }
+        }
     }
     dashboardList_->addStretch();
 }
@@ -1851,6 +2558,169 @@ bool MainWindow::isOpen(const QString& id) const {
     return false;
 }
 
+void MainWindow::loadTabOrder() {
+    QSettings settings(
+        QSettings::IniFormat,
+        QSettings::UserScope,
+        QStringLiteral("NEEBLES"),
+        QStringLiteral("NEEBLES Connect"));
+
+    const QStringList stored = settings.value(
+        QStringLiteral("ui/my-connect-tab-order-v1")
+    ).toStringList();
+
+    tabOrder_.clear();
+
+    QSet<QString> seen;
+
+    // Limitar contenido leído desde configuración local.
+    if (stored.size() > 2048) return;
+
+    for (const QString& id : stored) {
+        if (id.isEmpty() || id.size() > 128 ||
+            id == QStringLiteral("fixed:admin") ||
+            id.startsWith(QStringLiteral("quick:")) ||
+            seen.contains(id)) {
+            continue;
+        }
+
+        seen.insert(id);
+        tabOrder_.append(id);
+    }
+}
+
+void MainWindow::persistTabOrder() {
+    if (!tabs_ || syncingTabs_ || !vaultReady_) return;
+
+    QVector<QString> updated;
+    QSet<QString> seen;
+
+    // Las pestañas Quick nunca forman parte del orden guardado.
+    for (int i = 1; i < tabs_->count(); ++i) {
+        const QString id =
+            tabs_->tabBar()->tabData(i).toString();
+
+        if (id.isEmpty() || id.size() > 128 ||
+            id == QStringLiteral("fixed:admin") ||
+            id.startsWith(QStringLiteral("quick:")) ||
+            seen.contains(id)) {
+            continue;
+        }
+
+        updated.append(id);
+        seen.insert(id);
+    }
+
+    // Preservar referencias de equipos no visibles en este
+    // instante, sin sobrescribir su orden previamente guardado.
+    for (const QString& id : tabOrder_) {
+        if (!seen.contains(id) && updated.size() < 2048) {
+            updated.append(id);
+            seen.insert(id);
+        }
+    }
+
+    if (updated == tabOrder_) return;
+
+    tabOrder_ = updated;
+
+    QStringList stored;
+    for (const QString& id : tabOrder_)
+        stored.append(id);
+
+    QSettings settings(
+        QSettings::IniFormat,
+        QSettings::UserScope,
+        QStringLiteral("NEEBLES"),
+        QStringLiteral("NEEBLES Connect"));
+
+    settings.setValue(
+        QStringLiteral("ui/my-connect-tab-order-v1"),
+        stored);
+    settings.sync();
+
+    if (settings.status() != QSettings::NoError) {
+        statusBar()->showMessage(
+            QStringLiteral(
+                "No se pudo guardar el orden local de pestañas"),
+            6000);
+    }
+}
+
+void MainWindow::restoreTabOrder() {
+    if (!tabs_ || tabOrder_.isEmpty() ||
+        tabs_->count() < 3) return;
+
+    QVector<QString> existing;
+    QVector<QString> saved;
+    QSet<QString> seen;
+
+    for (int i = 1; i < tabs_->count(); ++i) {
+        const QString id =
+            tabs_->tabBar()->tabData(i).toString();
+
+        if (id.isEmpty() || seen.contains(id))
+            return;
+
+        seen.insert(id);
+        existing.append(id);
+
+        if (!id.startsWith(QStringLiteral("quick:")))
+            saved.append(id);
+    }
+
+    QVector<QString> ordered;
+
+    for (const QString& id : tabOrder_) {
+        if (saved.contains(id) && !ordered.contains(id))
+            ordered.append(id);
+    }
+
+    for (const QString& id : saved) {
+        if (!ordered.contains(id))
+            ordered.append(id);
+    }
+
+    // Mantener las posiciones actuales de las pestañas Quick
+    // mientras se reordenan las correspondientes a My Connect.
+    QVector<QString> target;
+    int savedIndex = 0;
+
+    for (const QString& id : existing) {
+        if (id.startsWith(QStringLiteral("quick:"))) {
+            target.append(id);
+        } else {
+            target.append(ordered.at(savedIndex));
+            ++savedIndex;
+        }
+    }
+
+    const bool previousSync = syncingTabs_;
+    syncingTabs_ = true;
+
+    // moveTab emite las señales necesarias para que Qt
+    // mantenga sincronizadas las páginas y sus pestañas.
+    for (int i = 1; i < tabs_->count(); ++i) {
+        const QString wanted = target.at(i - 1);
+        int found = -1;
+
+        for (int j = i; j < tabs_->count(); ++j) {
+            if (tabs_->tabBar()->tabData(j).toString() ==
+                    wanted) {
+                found = j;
+                break;
+            }
+        }
+
+        if (found < 0) break;
+
+        if (found != i)
+            tabs_->tabBar()->moveTab(found, i);
+    }
+
+    syncingTabs_ = previousSync;
+}
+
 void MainWindow::buildSavedTab(const ConnectProfile& profile) {
     if (savedSubtab(profile.id) || !vaultReady_) return;
     auto* sub = new QTabWidget(tabs_);
@@ -1891,11 +2761,14 @@ void MainWindow::buildSavedTab(const ConnectProfile& profile) {
         empty->setAlignment(Qt::AlignCenter);
         sub->addTab(empty,QStringLiteral("Sin conexiones"));
     }
+    installSubtabActionBar(sub);
     QObject::connect(sub,&QTabWidget::currentChanged,this,[this](int){refreshVisualState();});
     const int index=tabs_->addTab(sub,profile.name);
     tabs_->tabBar()->setTabData(index,profile.id);
+    refreshEquipmentTabColors();
     tabs_->tabBar()->setTabButton(index,QTabBar::RightSide,nullptr);
     tabs_->tabBar()->setTabButton(index,QTabBar::LeftSide,nullptr);
+    if (!syncingTabs_) restoreTabOrder();
 }
 
 void MainWindow::syncSavedTabs() {
@@ -1927,14 +2800,19 @@ void MainWindow::syncSavedTabs() {
             tabs_->tabBar()->setTabButton(i,QTabBar::RightSide,nullptr);
             tabs_->tabBar()->setTabButton(i,QTabBar::LeftSide,nullptr);
         }
+    restoreTabOrder();
     if(!selectedId.isEmpty())
         for(int i=1;i<tabs_->count();++i)
             if(tabs_->tabBar()->tabData(i).toString()==selectedId) {tabs_->setCurrentIndex(i);break;}
+    refreshEquipmentTabColors();
     syncingTabs_=false;
 }
 
 void MainWindow::refreshVisualState() {
     if (!sidebar_ || !tabs_) return;
+    if (auto* sub = qobject_cast<QTabWidget*>(
+            tabs_->currentWidget()))
+        refreshSubtabActionBar(sub);
     QWidget* pane=nullptr; int protocol=-1;
     const bool compact=activeConnection(&pane,&protocol);
     if(lastCompact_!=compact) {
@@ -1950,11 +2828,43 @@ void MainWindow::refreshVisualState() {
             button->setToolTip(button->property("navLabel").toString());
         }
     }
-    QWidget* tools=stopTool_?stopTool_->parentWidget():nullptr;
+    QWidget* tools=copyTool_?copyTool_->parentWidget():nullptr;
     if (tools) tools->setVisible(compact);
     if (copyTool_) {
         copyTool_->setVisible(compact && (protocol == kSsh || protocol == kVnc));
         copyTool_->setEnabled(compact && (protocol == kSsh || protocol == kVnc));
+        // El icono sigue a la subpestana SSH/VNC activa.
+        if (compact && copyIconProtocol_ != protocol) {
+            if (protocol == kSsh) {
+                QIcon icon = QIcon::fromTheme(
+                    QStringLiteral("edit-copy"));
+                if (icon.isNull()) {
+                    QPixmap pixmap(24, 24);
+                    pixmap.fill(Qt::transparent);
+                    QPainter painter(&pixmap);
+                    painter.setRenderHint(
+                        QPainter::Antialiasing);
+                    QPen pen(QColor(
+                        QStringLiteral("#E9D5FF")));
+                    pen.setWidth(2);
+                    painter.setPen(pen);
+                    painter.setBrush(Qt::NoBrush);
+                    painter.drawRoundedRect(
+                        QRectF(3, 3, 13, 15), 2, 2);
+                    painter.drawRoundedRect(
+                        QRectF(8, 7, 13, 14), 2, 2);
+                    painter.end();
+                    icon = QIcon(pixmap);
+                }
+                copyTool_->setIcon(icon);
+            } else {
+                // Mantener el icono original de VNC.
+                copyTool_->setIcon(
+                    style()->standardIcon(
+                        QStyle::SP_DialogSaveButton));
+            }
+            copyIconProtocol_ = protocol;
+        }
         if (compact) copyTool_->setToolTip(protocol == kSsh ?
             QStringLiteral("Copiar selección SSH (incluido scrollback)") :
             QStringLiteral("Copiar imagen del monitor VNC seleccionado"));
@@ -2001,7 +2911,6 @@ void MainWindow::refreshVisualState() {
             }
         }
     }
-    if (stopTool_) stopTool_->setEnabled(compact);
     if(vaultReady_ && adminStack_ && tabs_->currentIndex()==0 &&
        adminStack_->currentIndex()==kDashboard) {
         QHash<QString,bool> snapshot;
@@ -2158,6 +3067,7 @@ void MainWindow::openProfile(const ConnectProfile& profile, int protocol, const 
                     });
                 }
                 sub->setCurrentIndex(protocol);
+                refreshSubtabActionBar(sub);
             }
         }
         return;
@@ -2189,6 +3099,8 @@ void MainWindow::openProfile(const ConnectProfile& profile, int protocol, const 
         vnc->setConnectRequestHandler([this,id=profile.id]() { connectSaved(id,kVnc); });
     }
     sub->setCurrentIndex(protocol >= 0 ? protocol : profile.defaultProtocol);
+    installSubtabActionBar(sub);
+    QObject::connect(sub,&QTabWidget::currentChanged,this,[this](int){refreshVisualState();});
     const int index = tabs_->addTab(sub, profile.name);
     tabs_->tabBar()->setTabData(index, profile.id);
     tabs_->setCurrentIndex(index);

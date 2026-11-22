@@ -11,7 +11,7 @@ def js(path): return json.loads(read(path))
 class Connect102ContractTests(unittest.TestCase):
     def test_manifest(self):
         m=js('manifest.json')
-        self.assertEqual((m['schema'],m['name'],m['version']), (4,'neebles-connect','1.0.2'))
+        self.assertEqual((m['schema'],m['name'],m['version']), (4,'neebles-connect','1.0.3'))
         self.assertEqual(m['entrypoint'],'runtime/neebles-connect')
 
     def test_install_vault_and_rootfs(self):

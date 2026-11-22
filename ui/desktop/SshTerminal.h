@@ -40,6 +40,7 @@ private:
     CellPosition positionAt(const QPoint& point) const;
     bool cellAt(int logicalRow, int col, VTermScreenCell* cell) const;
     QString selectionText() const;
+    bool pasteClipboardText();
     QString cellText(const VTermScreenCell& cell) const;
     void clearSelection();
     VTerm* vt_ = nullptr;
