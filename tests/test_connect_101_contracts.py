@@ -65,7 +65,16 @@ class Connect102ContractTests(unittest.TestCase):
         self.assertIn(
             "bool SshTerminal::copyAllTextToClipboard() const",
             terminal)
-        self.assertIn("Qt::KeepAspectRatio", vnc)
+        # C63: el visor llena toda el area y el mouse mapea ejes separados.
+        self.assertIn("return rect();", vnc)
+        self.assertNotIn("Qt::KeepAspectRatio", vnc)
+        self.assertIn("double(source.width())/double(fitted.width())", vnc)
+        self.assertIn("double(source.height())/double(fitted.height())", vnc)
+        self.assertIn("source.x()+std::clamp", vnc)
+        self.assertIn("source.y()+std::clamp", vnc)
+        self.assertIn("Qt::IgnoreAspectRatio", main)
+        self.assertIn("brandLogo->setFixedSize(kSidebarBrandWidth, kSidebarBrandHeight)", main)
+        self.assertIn("brandLogo_->setVisible(!compact)", main)
         self.assertIn("status_->setVisible(!connected())", vnc)
         self.assertIn("QFrame::HLine", main)
         self.assertIn("dashboardGroupHeader", main)
